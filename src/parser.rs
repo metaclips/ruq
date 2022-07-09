@@ -29,25 +29,33 @@ impl Parser {
 
 impl JSONType {
     pub fn parse(data: &str) -> JSONType {
-        let array_compatibility = Regex::new(r"\[(.*)]").unwrap();
-        let output_compatibility = Regex::new(r".*\s?\|\s?(.*)").unwrap();
+        let array_compatibility =
+            Regex::new(r"(:?\s*)\[(:?\s*)(?P<value>.*)(:?\s*)](:?\s*)").unwrap();
+        let output_compatibility =
+            Regex::new(r"(?:\s*)?.*\|(?:\s*)?(?P<value>.*)(:?\s*)?").unwrap();
 
         if array_compatibility.is_match(data) {
-            let array_characters = array_compatibility
+            let mut array_characters = array_compatibility
                 .captures(data)
                 .unwrap()
-                .get(1)
+                .name("value")
                 .unwrap()
                 .as_str();
+
+            array_characters = array_characters.trim_start_matches(char::is_whitespace);
+            array_characters = array_characters.trim_end_matches(char::is_whitespace);
 
             return JSONType::Array(array_characters.to_string());
         } else if output_compatibility.is_match(data) {
-            let output_characters = output_compatibility
+            let mut output_characters = output_compatibility
                 .captures(data)
                 .unwrap()
-                .get(1)
+                .name("value")
                 .unwrap()
                 .as_str();
+
+            output_characters = output_characters.trim_start_matches(char::is_whitespace);
+            output_characters = output_characters.trim_end_matches(char::is_whitespace);
 
             return JSONType::Output(output_characters.to_string());
         }
@@ -150,6 +158,22 @@ mod test {
                 println!("{e}");
                 assert_eq!(
                     JSONType::parse(&e),
+                    JSONType::Output("{michael_said: .hello}".to_string())
+                );
+            }
+            _ => unreachable!(),
+        }
+    }
+    #[test]
+    fn appropriately_escape_space() {
+        let data = "   [  .hello   |   {michael_said: .hello}  ]  ";
+        let array_content = JSONType::parse(data);
+        println!("Done here");
+        match array_content {
+            JSONType::Array(e) => {
+                let output = JSONType::parse(&e);
+                assert_eq!(
+                    output,
                     JSONType::Output("{michael_said: .hello}".to_string())
                 );
             }
