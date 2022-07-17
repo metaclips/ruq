@@ -3,24 +3,29 @@ use std::fmt::Debug;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Parser {
-    String(Vec<ParsedString>),
     Pipe(Vec<JSONType>),
     Nil,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum JSONType {
+    String(Vec<ParsedString>),
+    Output(ParsedOutput),
+    Length,
+    Operator(Vec<(Operator, String)>),
+    Nil,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ParsedOutput {
+    Array(String),
+    JSON(String),
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ParsedString {
     String(String),
     IndexedString { name: String, index: usize },
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum JSONType {
-    Array(String),
-    Output(String),
-    Length,
-    Operator(Vec<(Operator, String)>),
-    Nil,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -35,72 +40,25 @@ pub enum Operator {
 
 impl Parser {
     pub fn parse(data: &str) -> Parser {
-        let string_compatibility =
-            Regex::new(r"(:?\s*)(\.(?P<string>\w*)(\[(?P<index>\d+)\])?)(:?\s*)(?P<others>.*)?")
-                .unwrap();
-
-        if string_compatibility.is_match(data) {
-            let mut words = vec![];
-            let mut data = data;
-
-            loop {
-                if data.is_empty() {
-                    break;
-                }
-
-                let capture = string_compatibility.captures(data).unwrap();
-
-                let value = {
-                    let mut word = capture.name("string").unwrap().as_str();
-                    remove_whitespace(&mut word);
-
-                    if let Some(index) = capture.name("index") {
-                        let index = index.as_str().parse::<usize>().unwrap();
-                        ParsedString::IndexedString {
-                            name: word.to_string(),
-                            index,
-                        }
-                    } else {
-                        ParsedString::String(word.to_string())
-                    }
-                };
-
-                words.push(value);
-
-                if let Some(other_chars) = capture.name("others") {
-                    data = other_chars.as_str();
-                } else {
-                    break;
-                }
-            }
-
-            return Parser::String(words);
-        }
-
         Parser::Nil
     }
 }
 
 impl JSONType {
-    pub fn parse(data: &str) -> JSONType {
-        let array_compatibility =
-            Regex::new(r"(:?\s*)\[(:?\s*)(?P<value>.*)(:?\s*)](:?\s*)").unwrap();
-        let output_compatibility = Regex::new(r"(?:\s*)?(?P<value>.*)(:?\s*)?").unwrap();
+    pub fn parse(mut data: &str) -> JSONType {
+        remove_whitespace(&mut data);
+
+        let output_compatibility =
+            Regex::new(r"^(?P<pre_identifier>\{|\[)(?P<value>.*)(?P<post_identifier>\}|\])$")
+                .unwrap();
         let length_compatibily = Regex::new(r".*\|?(?:\s*)length(?:\s*)\|?(.*)").unwrap();
         let operator_compatibily =
-            Regex::new(r"((?P<pre>.*)(?P<Operator>\+|\*|/|%|-)(?P<post>.*))+").unwrap();
+            Regex::new(r"((?P<pre>.*)(?P<operator>\+|\*|/|%|-)(?P<post>.*))+").unwrap();
+        let string_compatibility =
+            Regex::new(r"(\.(?P<string>\w*)(:?\s*)(\[(?P<index>\d+)\])?)(:?\s*)(?P<others>.*)?")
+                .unwrap();
 
-        if array_compatibility.is_match(data) {
-            let mut array_characters = array_compatibility
-                .captures(data)
-                .unwrap()
-                .name("value")
-                .unwrap()
-                .as_str();
-
-            remove_whitespace(&mut array_characters);
-            return JSONType::Array(array_characters.to_string());
-        } else if operator_compatibily.is_match(data) {
+        if operator_compatibily.is_match(data) {
             let mut operators = vec![];
 
             let mut data = data;
@@ -124,7 +82,7 @@ impl JSONType {
                         };
 
                         let operator = {
-                            if let Some(op) = capture.name("Operator") {
+                            if let Some(op) = capture.name("operator") {
                                 op.as_str()
                             } else {
                                 ""
@@ -165,8 +123,65 @@ impl JSONType {
                 .unwrap()
                 .as_str();
 
+            let pre_identifier = output_compatibility
+                .captures(data)
+                .unwrap()
+                .name("pre_identifier")
+                .unwrap()
+                .as_str();
+
+            let post_identifier = output_compatibility
+                .captures(data)
+                .unwrap()
+                .name("post_identifier")
+                .unwrap()
+                .as_str();
+
             remove_whitespace(&mut output_characters);
-            return JSONType::Output(output_characters.to_string());
+
+            let parsed_output = match (pre_identifier, post_identifier) {
+                ("[", "]") => ParsedOutput::Array(output_characters.to_string()),
+                ("{", "}") => ParsedOutput::JSON(output_characters.to_string()),
+                _ => panic!("Invalid parsed output {pre_identifier} {post_identifier}",),
+            };
+
+            return JSONType::Output(parsed_output);
+        } else if string_compatibility.is_match(data) {
+            let mut words = vec![];
+            let mut data = data;
+
+            loop {
+                if data.is_empty() || !string_compatibility.is_match(data) {
+                    break;
+                }
+
+                let capture = string_compatibility.captures(data).unwrap();
+
+                let value = {
+                    let mut word = capture.name("string").unwrap().as_str();
+                    remove_whitespace(&mut word);
+
+                    if let Some(index) = capture.name("index") {
+                        let index = index.as_str().parse::<usize>().unwrap();
+                        ParsedString::IndexedString {
+                            name: word.to_string(),
+                            index,
+                        }
+                    } else {
+                        ParsedString::String(word.to_string())
+                    }
+                };
+
+                words.push(value);
+
+                if let Some(other_chars) = capture.name("others") {
+                    data = other_chars.as_str();
+                } else {
+                    break;
+                }
+            }
+
+            return JSONType::String(words);
         }
 
         JSONType::Nil
@@ -204,43 +219,39 @@ mod test {
     }
 
     #[test]
-    fn parse_dot() {
-        // let data = ".";
-        // assert_eq!(parser::parse(data), parser::Nil);
-    }
-
-    #[test]
     fn parse_array() {
         let data = "[.hello]";
-        assert_eq!(JSONType::parse(data), JSONType::Array(".hello".to_string()));
+        assert_eq!(
+            JSONType::parse(data),
+            JSONType::Output(ParsedOutput::Array(".hello".to_string()))
+        );
     }
     #[test]
     fn parse_array_with_json_output() {
         let data = "[{michael_said: .hello}]";
         let array_content = JSONType::parse(data);
-        println!("Done here");
         match array_content {
-            JSONType::Array(e) => {
+            JSONType::Output(ParsedOutput::Array(e)) => {
                 println!("{e}");
                 assert_eq!(
                     JSONType::parse(&e),
-                    JSONType::Output("{michael_said: .hello}".to_string())
+                    JSONType::Output(ParsedOutput::JSON("michael_said: .hello".to_string()))
                 );
             }
             _ => unreachable!(),
         }
     }
+
     #[test]
     fn appropriately_escape_space() {
         let data = "   [  {michael_said: .hello}  ]  ";
         let array_content = JSONType::parse(data);
-        println!("Done here");
         match array_content {
-            JSONType::Array(e) => {
-                let output = JSONType::parse(&e);
+            JSONType::Output(ParsedOutput::Array(e)) => {
+                println!("{e}");
                 assert_eq!(
-                    output,
-                    JSONType::Output("{michael_said: .hello}".to_string())
+                    JSONType::parse(&e),
+                    JSONType::Output(ParsedOutput::JSON("michael_said: .hello".to_string()))
                 );
             }
             _ => unreachable!(),
@@ -251,7 +262,7 @@ mod test {
     fn find_length() {
         let tests = [
             TestJSONType {
-                query: String::from(". | length"),
+                query: String::from("length"),
                 json_types: vec![JSONType::Length],
             },
             TestJSONType {
@@ -261,29 +272,8 @@ mod test {
         ];
 
         for (i, test) in tests.iter().enumerate() {
-            let mut parsed_collection = vec![];
-
             let mut parsed = JSONType::parse(&test.query);
-            loop {
-                parsed_collection.push(parsed.clone());
-                match parsed {
-                    JSONType::Array(e) => {
-                        parsed = JSONType::parse(&e);
-                    }
-                    JSONType::Output(e) => {
-                        parsed = JSONType::parse(&e);
-                    }
-                    JSONType::Operator(e) => break,
-                    JSONType::Length => break,
-                    JSONType::Nil => break,
-                }
-            }
-
-            assert_eq!(
-                parsed_collection, test.json_types,
-                "Failed testing index {}",
-                i
-            );
+            assert_eq!(vec![parsed], test.json_types, "Failed testing index {}", i);
         }
     }
 
@@ -319,16 +309,16 @@ mod test {
     #[test]
     fn find_strings() {
         let tests = [
-            TestParserType {
+            TestJSONType {
                 query: String::from(".hello.shell"),
-                json_types: vec![Parser::String(vec![
+                json_types: vec![JSONType::String(vec![
                     ParsedString::String(String::from("hello")),
                     ParsedString::String(String::from("shell")),
                 ])],
             },
-            TestParserType {
+            TestJSONType {
                 query: String::from(".hello.shell[0]"),
-                json_types: vec![Parser::String(vec![
+                json_types: vec![JSONType::String(vec![
                     ParsedString::String(String::from("hello")),
                     ParsedString::IndexedString {
                         index: 0,
@@ -336,19 +326,33 @@ mod test {
                     },
                 ])],
             },
-            TestParserType {
-                query: String::from(".[0]"),
-                json_types: vec![Parser::String(vec![
+            TestJSONType {
+                query: String::from(".hello.shell[1001]"),
+                json_types: vec![JSONType::String(vec![
+                    ParsedString::String(String::from("hello")),
                     ParsedString::IndexedString {
-                        index: 0,
-                        name: String::from(""),
+                        index: 1001,
+                        name: String::from("shell"),
                     },
                 ])],
+            },
+            TestJSONType {
+                query: String::from(".[0]"),
+                json_types: vec![JSONType::String(vec![ParsedString::IndexedString {
+                    index: 0,
+                    name: String::from(""),
+                }])],
+            },
+            TestJSONType {
+                query: String::from("."),
+                json_types: vec![JSONType::String(vec![ParsedString::String(String::from(
+                    "",
+                ))])],
             },
         ];
 
         for (i, test) in tests.iter().enumerate() {
-            let parsed = Parser::parse(&test.query);
+            let parsed = JSONType::parse(&test.query);
             assert_eq!(parsed, test.json_types[0], "Failed testing index {}", i);
         }
     }
