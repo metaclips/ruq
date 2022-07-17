@@ -220,7 +220,7 @@ mod test {
 
     #[test]
     fn parse_array() {
-        let data = "[.hello]";
+        let data = "[ .hello]";
         assert_eq!(
             JSONType::parse(data),
             JSONType::Output(ParsedOutput::Array(".hello".to_string()))
@@ -327,7 +327,7 @@ mod test {
                 ])],
             },
             TestJSONType {
-                query: String::from(".hello.shell[1001]"),
+                query: String::from(".hello.shell [1001]"),
                 json_types: vec![JSONType::String(vec![
                     ParsedString::String(String::from("hello")),
                     ParsedString::IndexedString {
