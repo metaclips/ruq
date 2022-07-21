@@ -1,4 +1,4 @@
-use regex::{Match, Regex};
+use regex::Regex;
 use std::fmt::Debug;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -13,7 +13,7 @@ pub enum Parser {
 #[derive(Clone, Debug, PartialEq)]
 pub enum ParsedOutput {
     Array(String),
-    JSON(String),
+    Json(String),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -52,7 +52,7 @@ impl Parser {
     }
 
     fn regexer<'a>(parser: &Regex, data: &'a str) -> (&'a str, Option<&'a str>) {
-        if parser.is_match(&data) {
+        if parser.is_match(data) {
             let capture = parser.captures(data).unwrap();
 
             let pre = capture.name("pre").unwrap().as_str();
@@ -158,7 +158,7 @@ impl Parser {
 
             let parsed_output = match (pre_identifier, post_identifier) {
                 ("[", "]") => ParsedOutput::Array(output_characters.to_string()),
-                ("{", "}") => ParsedOutput::JSON(output_characters.to_string()),
+                ("{", "}") => ParsedOutput::Json(output_characters.to_string()),
                 _ => panic!("Invalid parsed output {pre_identifier} {post_identifier}",),
             };
 
@@ -184,7 +184,7 @@ impl Parser {
                             name: word.to_string(),
                             index,
                         }
-                    } else if word == "" {
+                    } else if word.is_empty() {
                         ParsedString::Nil
                     } else {
                         ParsedString::String(word.to_string())
@@ -305,7 +305,7 @@ mod test_json_types {
                 println!("{e}");
                 assert_eq!(
                     Parser::parse_pipe(&e),
-                    Parser::Output(ParsedOutput::JSON("michael_said: .hello".to_string()))
+                    Parser::Output(ParsedOutput::Json("michael_said: .hello".to_string()))
                 );
             }
             _ => unreachable!(),
@@ -321,7 +321,7 @@ mod test_json_types {
                 println!("{e}");
                 assert_eq!(
                     Parser::parse_pipe(&e),
-                    Parser::Output(ParsedOutput::JSON("michael_said: .hello".to_string()))
+                    Parser::Output(ParsedOutput::Json("michael_said: .hello".to_string()))
                 );
             }
             _ => unreachable!(),
