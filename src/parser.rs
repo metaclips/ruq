@@ -3,12 +3,6 @@ use std::fmt::Debug;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Parser {
-    Pipe(Vec<JSONType>),
-    Nil,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum JSONType {
     String(Vec<ParsedString>),
     Output(ParsedOutput),
     Length,
@@ -26,6 +20,7 @@ pub enum ParsedOutput {
 pub enum ParsedString {
     String(String),
     IndexedString { name: String, index: usize },
+    Nil,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -39,13 +34,35 @@ pub enum Operator {
 }
 
 impl Parser {
-    pub fn parse(data: &str) -> Parser {
-        Parser::Nil
-    }
-}
+    pub fn parse(mut data: &str) -> Vec<Parser> {
+        remove_whitespace(&mut data);
+        let parser = Regex::new(r"(?P<pre>.*)(\s*)\|(\s*)(?P<post>.*)").unwrap();
 
-impl JSONType {
-    pub fn parse(mut data: &str) -> JSONType {
+        let mut parsed_json_type = vec![];
+
+        let (mut pre, mut post) = Self::regexer(&parser, data);
+        parsed_json_type.push(Parser::parse_pipe(pre));
+
+        while post != None {
+            (pre, post) = Self::regexer(&parser, post.unwrap());
+            parsed_json_type.push(Parser::parse_pipe(pre));
+        }
+
+        parsed_json_type
+    }
+
+    fn regexer<'a>(parser: &Regex, data: &'a str) -> (&'a str, Option<&'a str>) {
+        if parser.is_match(&data) {
+            let capture = parser.captures(data).unwrap();
+
+            let pre = capture.name("pre").unwrap().as_str();
+            let post = capture.name("post").map(|a| a.as_str());
+            return (pre, post);
+        }
+        (data, None)
+    }
+
+    fn parse_pipe(mut data: &str) -> Self {
         remove_whitespace(&mut data);
 
         let output_compatibility =
@@ -103,7 +120,7 @@ impl JSONType {
                         operators.push((operator, data.to_string()));
 
                         operators.reverse();
-                        return JSONType::Operator(operators);
+                        return Parser::Operator(operators);
                     }
                     _ => {
                         remove_whitespace(&mut post);
@@ -114,7 +131,7 @@ impl JSONType {
                 data = pre;
             }
         } else if length_compatibily.is_match(data) {
-            return JSONType::Length;
+            return Parser::Length;
         } else if output_compatibility.is_match(data) {
             let mut output_characters = output_compatibility
                 .captures(data)
@@ -145,7 +162,7 @@ impl JSONType {
                 _ => panic!("Invalid parsed output {pre_identifier} {post_identifier}",),
             };
 
-            return JSONType::Output(parsed_output);
+            return Parser::Output(parsed_output);
         } else if string_compatibility.is_match(data) {
             let mut words = vec![];
             let mut data = data;
@@ -167,6 +184,8 @@ impl JSONType {
                             name: word.to_string(),
                             index,
                         }
+                    } else if word == "" {
+                        ParsedString::Nil
                     } else {
                         ParsedString::String(word.to_string())
                     }
@@ -181,12 +200,14 @@ impl JSONType {
                 }
             }
 
-            return JSONType::String(words);
+            return Parser::String(words);
         }
 
-        JSONType::Nil
+        Parser::Nil
     }
 }
+
+impl Parser {}
 
 impl From<&str> for Operator {
     fn from(val: &str) -> Self {
@@ -206,14 +227,63 @@ fn remove_whitespace(data: &mut &str) {
     *data = data.trim_end_matches(char::is_whitespace);
 }
 
-mod test {
+mod test_parser {
     use super::*;
-    struct TestJSONType {
+    struct TestParser {
         query: String,
-        json_types: Vec<JSONType>,
+        json_types: Vec<Parser>,
     }
 
-    struct TestParserType {
+    #[test]
+    fn test_nil_parser() {
+        let tests = [
+            TestParser {
+                query: String::from("."),
+                json_types: vec![Parser::String(vec![ParsedString::Nil])],
+            },
+            TestParser {
+                query: String::from(" ."),
+                json_types: vec![Parser::String(vec![ParsedString::Nil])],
+            },
+            TestParser {
+                query: String::from(" . "),
+                json_types: vec![Parser::String(vec![ParsedString::Nil])],
+            },
+        ];
+
+        for (i, test) in tests.into_iter().enumerate() {
+            let parsed = Parser::parse(&test.query);
+            assert_eq!(parsed, test.json_types, "Failed testing index {}", i);
+        }
+    }
+
+    #[test]
+    fn test_nil_with_length() {
+        let tests = [
+            TestParser {
+                query: String::from(". | length"),
+                json_types: vec![Parser::String(vec![ParsedString::Nil]), Parser::Length],
+            },
+            TestParser {
+                query: String::from(" .|length"),
+                json_types: vec![Parser::String(vec![ParsedString::Nil]), Parser::Length],
+            },
+            TestParser {
+                query: String::from(".|length"),
+                json_types: vec![Parser::String(vec![ParsedString::Nil]), Parser::Length],
+            },
+        ];
+
+        for (i, test) in tests.into_iter().enumerate() {
+            let parsed = Parser::parse(&test.query);
+            assert_eq!(parsed, test.json_types, "Failed testing index {}", i);
+        }
+    }
+}
+
+mod test_json_types {
+    use super::*;
+    struct TestParser {
         query: String,
         json_types: Vec<Parser>,
     }
@@ -222,20 +292,20 @@ mod test {
     fn parse_array() {
         let data = "[ .hello]";
         assert_eq!(
-            JSONType::parse(data),
-            JSONType::Output(ParsedOutput::Array(".hello".to_string()))
+            Parser::parse_pipe(data),
+            Parser::Output(ParsedOutput::Array(".hello".to_string()))
         );
     }
     #[test]
     fn parse_array_with_json_output() {
         let data = "[{michael_said: .hello}]";
-        let array_content = JSONType::parse(data);
+        let array_content = Parser::parse_pipe(data);
         match array_content {
-            JSONType::Output(ParsedOutput::Array(e)) => {
+            Parser::Output(ParsedOutput::Array(e)) => {
                 println!("{e}");
                 assert_eq!(
-                    JSONType::parse(&e),
-                    JSONType::Output(ParsedOutput::JSON("michael_said: .hello".to_string()))
+                    Parser::parse_pipe(&e),
+                    Parser::Output(ParsedOutput::JSON("michael_said: .hello".to_string()))
                 );
             }
             _ => unreachable!(),
@@ -245,13 +315,13 @@ mod test {
     #[test]
     fn appropriately_escape_space() {
         let data = "   [  {michael_said: .hello}  ]  ";
-        let array_content = JSONType::parse(data);
+        let array_content = Parser::parse_pipe(data);
         match array_content {
-            JSONType::Output(ParsedOutput::Array(e)) => {
+            Parser::Output(ParsedOutput::Array(e)) => {
                 println!("{e}");
                 assert_eq!(
-                    JSONType::parse(&e),
-                    JSONType::Output(ParsedOutput::JSON("michael_said: .hello".to_string()))
+                    Parser::parse_pipe(&e),
+                    Parser::Output(ParsedOutput::JSON("michael_said: .hello".to_string()))
                 );
             }
             _ => unreachable!(),
@@ -261,18 +331,18 @@ mod test {
     #[test]
     fn find_length() {
         let tests = [
-            TestJSONType {
+            TestParser {
                 query: String::from("length"),
-                json_types: vec![JSONType::Length],
+                json_types: vec![Parser::Length],
             },
-            TestJSONType {
+            TestParser {
                 query: String::from(" length"),
-                json_types: vec![JSONType::Length],
+                json_types: vec![Parser::Length],
             },
         ];
 
         for (i, test) in tests.iter().enumerate() {
-            let mut parsed = JSONType::parse(&test.query);
+            let parsed = Parser::parse_pipe(&test.query);
             assert_eq!(vec![parsed], test.json_types, "Failed testing index {}", i);
         }
     }
@@ -280,18 +350,18 @@ mod test {
     #[test]
     fn find_operators() {
         let tests = [
-            TestJSONType {
+            TestParser {
                 query: String::from("{a: 1} + {b: 2} + {c: 3} + {a: 42}"),
-                json_types: vec![JSONType::Operator(vec![
+                json_types: vec![Parser::Operator(vec![
                     (Operator::Nil, String::from("{a: 1}")),
                     (Operator::Addition, String::from("{b: 2}")),
                     (Operator::Addition, String::from("{c: 3}")),
                     (Operator::Addition, String::from("{a: 42}")),
                 ])],
             },
-            TestJSONType {
+            TestParser {
                 query: String::from("{a: 1}+{b: 2}%{c: 3}-{a: 42}"),
-                json_types: vec![JSONType::Operator(vec![
+                json_types: vec![Parser::Operator(vec![
                     (Operator::Nil, String::from("{a: 1}")),
                     (Operator::Addition, String::from("{b: 2}")),
                     (Operator::Modulo, String::from("{c: 3}")),
@@ -301,7 +371,7 @@ mod test {
         ];
 
         for (i, test) in tests.iter().enumerate() {
-            let parsed = JSONType::parse(&test.query);
+            let parsed = Parser::parse_pipe(&test.query);
             assert_eq!(parsed, test.json_types[0], "Failed testing index {}", i);
         }
     }
@@ -309,16 +379,16 @@ mod test {
     #[test]
     fn find_strings() {
         let tests = [
-            TestJSONType {
+            TestParser {
                 query: String::from(".hello.shell"),
-                json_types: vec![JSONType::String(vec![
+                json_types: vec![Parser::String(vec![
                     ParsedString::String(String::from("hello")),
                     ParsedString::String(String::from("shell")),
                 ])],
             },
-            TestJSONType {
+            TestParser {
                 query: String::from(".hello.shell[0]"),
-                json_types: vec![JSONType::String(vec![
+                json_types: vec![Parser::String(vec![
                     ParsedString::String(String::from("hello")),
                     ParsedString::IndexedString {
                         index: 0,
@@ -326,9 +396,9 @@ mod test {
                     },
                 ])],
             },
-            TestJSONType {
+            TestParser {
                 query: String::from(".hello.shell [1001]"),
-                json_types: vec![JSONType::String(vec![
+                json_types: vec![Parser::String(vec![
                     ParsedString::String(String::from("hello")),
                     ParsedString::IndexedString {
                         index: 1001,
@@ -336,23 +406,21 @@ mod test {
                     },
                 ])],
             },
-            TestJSONType {
+            TestParser {
                 query: String::from(".[0]"),
-                json_types: vec![JSONType::String(vec![ParsedString::IndexedString {
+                json_types: vec![Parser::String(vec![ParsedString::IndexedString {
                     index: 0,
                     name: String::from(""),
                 }])],
             },
-            TestJSONType {
+            TestParser {
                 query: String::from("."),
-                json_types: vec![JSONType::String(vec![ParsedString::String(String::from(
-                    "",
-                ))])],
+                json_types: vec![Parser::String(vec![ParsedString::Nil])],
             },
         ];
 
         for (i, test) in tests.iter().enumerate() {
-            let parsed = JSONType::parse(&test.query);
+            let parsed = Parser::parse_pipe(&test.query);
             assert_eq!(parsed, test.json_types[0], "Failed testing index {}", i);
         }
     }
