@@ -36,7 +36,7 @@ pub enum Operator {
 impl Parser {
     pub fn parse(mut data: &str) -> Vec<Parser> {
         remove_whitespace(&mut data);
-        let parser = Regex::new(r"(?P<pre>.*)(\s*)\|(\s*)(?P<post>.*)").unwrap();
+        let parser = Regex::new(r"(?P<pre>.*?)(\s*)\|(\s*)(?P<post>.*)").unwrap();
 
         let mut parsed_json_type = vec![];
 
@@ -70,17 +70,28 @@ impl Parser {
                 .unwrap();
         let length_compatibily = Regex::new(r".*\|?(?:\s*)length(?:\s*)\|?(.*)").unwrap();
         let operator_compatibily =
-            Regex::new(r"((?P<pre>.*)(?P<operator>\+|\*|/|%|-)(?P<post>.*))+").unwrap();
+            Regex::new(r"(?P<pre>.*?)(?P<operator>\+|\*|/|%|-)(?P<post>.*)").unwrap();
         let string_compatibility =
             Regex::new(r"(\.(?P<string>\w*)(:?\s*)(\[(?P<index>\d+)\])?)(:?\s*)(?P<others>.*)?")
                 .unwrap();
 
-        if operator_compatibily.is_match(data) {
+        if length_compatibily.is_match(data) {
+            return Parser::Length;
+        } else if operator_compatibily.is_match(data) {
             let mut operators = vec![];
 
             let mut data = data;
             loop {
-                let (pre, mut post, operator) = {
+                if !operator_compatibily.is_match(data) {
+                    if !data.is_empty() {
+                        remove_whitespace(&mut data);
+                        operators.push((Operator::Nil, data.to_string()));
+                    }
+
+                    return Parser::Operator(operators);
+                }
+
+                let (mut pre, post, operator) = {
                     if let Some(capture) = operator_compatibily.captures(data) {
                         let pre = {
                             if let Some(op) = capture.name("pre") {
@@ -114,24 +125,11 @@ impl Parser {
 
                 let operator = Operator::from(operator);
 
-                match operator {
-                    Operator::Nil => {
-                        remove_whitespace(&mut data);
-                        operators.push((operator, data.to_string()));
+                remove_whitespace(&mut pre);
+                operators.push((operator, pre.to_string()));
 
-                        operators.reverse();
-                        return Parser::Operator(operators);
-                    }
-                    _ => {
-                        remove_whitespace(&mut post);
-                        operators.push((operator, post.to_string()));
-                    }
-                }
-
-                data = pre;
+                data = post;
             }
-        } else if length_compatibily.is_match(data) {
-            return Parser::Length;
         } else if output_compatibility.is_match(data) {
             let mut output_characters = output_compatibility
                 .captures(data)
@@ -279,6 +277,54 @@ mod test_parser {
             assert_eq!(parsed, test.json_types, "Failed testing index {}", i);
         }
     }
+
+    #[test]
+    fn test_piped_operator() {
+        let tests = [
+            TestParser {
+                query: String::from(". | {a: .a} + {b: .b} + {c: .c} + {a: .c}"),
+                json_types: vec![
+                    Parser::String(vec![ParsedString::Nil]),
+                    Parser::Operator(vec![
+                        (Operator::Addition, String::from("{a: .a}")),
+                        (Operator::Addition, String::from("{b: .b}")),
+                        (Operator::Addition, String::from("{c: .c}")),
+                        (Operator::Nil, String::from("{a: .c}")),
+                    ]),
+                ],
+            },
+            TestParser {
+                query: String::from(". | {a: .a} +{b: .b} + {c: .c} + {a: .c}"),
+                json_types: vec![
+                    Parser::String(vec![ParsedString::Nil]),
+                    Parser::Operator(vec![
+                        (Operator::Addition, String::from("{a: .a}")),
+                        (Operator::Addition, String::from("{b: .b}")),
+                        (Operator::Addition, String::from("{c: .c}")),
+                        (Operator::Nil, String::from("{a: .c}")),
+                    ]),
+                ],
+            },
+            TestParser {
+                query: String::from(". | {a: .a}+{b: .b}+{c: .c}+{a: .c} | length"),
+                json_types: vec![
+                    Parser::String(vec![ParsedString::Nil]),
+                    Parser::Operator(vec![
+                        (Operator::Addition, String::from("{a: .a}")),
+                        (Operator::Addition, String::from("{b: .b}")),
+                        (Operator::Addition, String::from("{c: .c}")),
+                        (Operator::Nil, String::from("{a: .c}")),
+                    ]),
+                    Parser::Length,
+                ],
+            },
+        ];
+
+        for (i, test) in tests.into_iter().enumerate() {
+            let parsed = Parser::parse(&test.query);
+            assert_eq!(parsed, test.json_types, "Failed testing index {}", i);
+        }
+    }
 }
 
 mod test_json_types {
@@ -353,19 +399,19 @@ mod test_json_types {
             TestParser {
                 query: String::from("{a: 1} + {b: 2} + {c: 3} + {a: 42}"),
                 json_types: vec![Parser::Operator(vec![
-                    (Operator::Nil, String::from("{a: 1}")),
+                    (Operator::Addition, String::from("{a: 1}")),
                     (Operator::Addition, String::from("{b: 2}")),
                     (Operator::Addition, String::from("{c: 3}")),
-                    (Operator::Addition, String::from("{a: 42}")),
+                    (Operator::Nil, String::from("{a: 42}")),
                 ])],
             },
             TestParser {
                 query: String::from("{a: 1}+{b: 2}%{c: 3}-{a: 42}"),
                 json_types: vec![Parser::Operator(vec![
-                    (Operator::Nil, String::from("{a: 1}")),
-                    (Operator::Addition, String::from("{b: 2}")),
-                    (Operator::Modulo, String::from("{c: 3}")),
-                    (Operator::Subtration, String::from("{a: 42}")),
+                    (Operator::Addition, String::from("{a: 1}")),
+                    (Operator::Modulo, String::from("{b: 2}")),
+                    (Operator::Subtration, String::from("{c: 3}")),
+                    (Operator::Nil, String::from("{a: 42}")),
                 ])],
             },
         ];
