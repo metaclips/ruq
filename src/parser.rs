@@ -233,6 +233,59 @@ mod test_parser {
     }
 
     #[test]
+    fn test_four_pipes() {
+        let tests = [
+            TestParser {
+                query: String::from(". | {a: .a} + {b: .b} + {c: .c} + {a: .c}|[.] |length"),
+                json_types: vec![
+                    Parser::String(vec![ParsedString::Nil]),
+                    Parser::Operator(vec![
+                        (Operator::Addition, String::from("{a: .a}")),
+                        (Operator::Addition, String::from("{b: .b}")),
+                        (Operator::Addition, String::from("{c: .c}")),
+                        (Operator::Nil, String::from("{a: .c}")),
+                    ]),
+                    Parser::Output(ParsedOutput::Array(String::from("."))),
+                    Parser::Length,
+                ],
+            },
+            TestParser {
+                query: String::from(". | {a: .a} +{b: .b} + {c: .c} + {a: .c} |[.]  | length"),
+                json_types: vec![
+                    Parser::String(vec![ParsedString::Nil]),
+                    Parser::Operator(vec![
+                        (Operator::Addition, String::from("{a: .a}")),
+                        (Operator::Addition, String::from("{b: .b}")),
+                        (Operator::Addition, String::from("{c: .c}")),
+                        (Operator::Nil, String::from("{a: .c}")),
+                    ]),
+                    Parser::Output(ParsedOutput::Array(String::from("."))),
+                    Parser::Length,
+                ],
+            },
+            TestParser {
+                query: String::from(". | {a: .a}+{b: .b}+{c: .c}+{a: .c} | [.] | length"),
+                json_types: vec![
+                    Parser::String(vec![ParsedString::Nil]),
+                    Parser::Operator(vec![
+                        (Operator::Addition, String::from("{a: .a}")),
+                        (Operator::Addition, String::from("{b: .b}")),
+                        (Operator::Addition, String::from("{c: .c}")),
+                        (Operator::Nil, String::from("{a: .c}")),
+                    ]),
+                    Parser::Output(ParsedOutput::Array(String::from("."))),
+                    Parser::Length,
+                ],
+            },
+        ];
+
+        for (i, test) in tests.into_iter().enumerate() {
+            let parsed = Parser::parse(&test.query);
+            assert_eq!(parsed, test.json_types, "Failed testing index {}", i);
+        }
+    }
+
+    #[test]
     fn test_nil_parser() {
         let tests = [
             TestParser {
