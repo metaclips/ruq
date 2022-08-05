@@ -20,6 +20,7 @@ enum Output {
     Filter,
     Number,
     String,
+    Invalid,
 }
 
 impl JSONParser {
@@ -29,7 +30,7 @@ impl JSONParser {
                 .unwrap();
         let filter_compatibility: Regex = Regex::new(r"\s*\.(?P<key>\S)").unwrap();
         let number_compatibility: Regex = Regex::new(r"\s*(?P<value>\d+)").unwrap();
-        let string_compatibility: Regex = Regex::new(r"\s*(?P<value>\s+)").unwrap();
+        let string_compatibility: Regex = Regex::new(r#"\s*"(?P<value>.*)""#).unwrap();
 
         Self {
             json_compatibility,
@@ -45,11 +46,7 @@ impl JSONParser {
         }
     }
 
-    fn parser(
-        &self,
-        json: &serde_json::Value,
-        mut query: String,
-    ) -> (Option<String>, Value, Output) {
+    fn parser(&self, json: &serde_json::Value, mut query: String) -> (Value, Output) {
         if self.json_compatibility.is_match(&query) {
             let mut json_value = serde_json::Map::new();
 
@@ -68,7 +65,9 @@ impl JSONParser {
                     (key, value, other)
                 };
 
-                json_value.insert(key, value.into());
+                let (value, _) = self.parser(json, value);
+
+                json_value.insert(key, value);
 
                 if other.is_empty() {
                     break;
@@ -76,7 +75,20 @@ impl JSONParser {
                 query = format!("{{{other}}}");
             }
 
-            (None, json_value.into(), Output::Json)
+            (json_value.into(), Output::Json)
+        } else if self.filter_compatibility.is_match(&query) {
+            let capture = self.filter_compatibility.captures(&query).unwrap();
+            let key = capture.name("key").unwrap().as_str();
+
+            let value = json.get(key).cloned().unwrap_or(Value::Null);
+
+            (value, Output::Filter)
+        } else if self.string_compatibility.is_match(&query) {
+            let capture = self.string_compatibility.captures(&query).unwrap();
+
+            let value = capture.name("value").unwrap().as_str();
+
+            (value.into(), Output::String)
         } else if self.number_compatibility.is_match(&query) {
             let capture = self.number_compatibility.captures(&query).unwrap();
 
@@ -87,13 +99,9 @@ impl JSONParser {
                 .parse::<usize>()
                 .unwrap();
 
-            (None, value.into(), Output::Number)
-        } else if self.filter_compatibility.is_match(&query) {
-            todo!()
-        } else if self.string_compatibility.is_match(&query) {
-            todo!()
+            (value.into(), Output::Number)
         } else {
-            todo!()
+            (Value::Null, Output::Invalid)
         }
     }
 }
@@ -105,16 +113,35 @@ mod test {
     #[test]
     fn test_multiple_json_input() {
         let json: Value = serde_json::from_str("{}").unwrap();
-        let query = String::from("{a: 1, b: 2, c: 3, d: 42}");
+        let query = String::from(r#"{a: "1", b: 2, c: 3, d: 42}"#);
 
         let parser = JSONParser::new();
-        let (key, value, output) = parser.parser(&json, query);
+        let (value, output) = parser.parser(&json, query);
 
         let res = serde_json::json!({
             "a": "1",
-            "b": "2",
-            "c": "3",
-            "d": "42",
+            "b": 2,
+            "c": 3,
+            "d": 42,
+        });
+
+        assert_eq!(res, value);
+        assert_eq!(output, Output::Json);
+    }
+
+    #[test]
+    fn test_nested_json() {
+        let json: Value = serde_json::from_str("{}").unwrap();
+        let query = String::from(r#"{a: {b: "1"}, b: 2, c: 3, d: 42}"#);
+
+        let parser = JSONParser::new();
+        let (value, output) = parser.parser(&json, query);
+
+        let res = serde_json::json!({
+            "a": {"b": "1"},
+            "b": 2,
+            "c": 3,
+            "d": 42,
         });
 
         assert_eq!(res, value);
