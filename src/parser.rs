@@ -318,6 +318,15 @@ mod test_parser {
                 }),
             },
             TestParser {
+                query: String::from(". | {a: .a} + {b: .b} + {c: .c} + {a: .c} | .b + 1"),
+                result: serde_json::json!(6.0),
+                json: serde_json::json!({
+                    "a": "Hello",
+                    "b": 5,
+                    "c": true,
+                }),
+            },
+            TestParser {
                 query: String::from(". | {a: .a} + {b: {a: .b}} + {c: .c} + {a: .c} | length"),
                 result: serde_json::json!(3.0),
                 json: serde_json::json!({
