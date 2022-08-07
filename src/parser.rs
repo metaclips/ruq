@@ -2,13 +2,13 @@ use regex::Regex;
 use serde_json::Value;
 use std::fmt::Debug;
 
-use crate::{json, json_parser::JSONParser};
+use crate::{json_parser::JSONParser, json_processor};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Parser {
     JSON(Value),
     Length,
-    Operator(Vec<(Operator, String)>),
+    Operator(Vec<(Operator, Value)>),
     Nil,
 }
 
@@ -46,14 +46,7 @@ impl Parser {
         match Parser::parse_pipe(json_data, query) {
             Parser::JSON(e) => e,
             Parser::Length => Self::get_json_length(&json_data).into(),
-            Parser::Operator(e) => {
-                let json_parser = JSONParser::new();
-
-                for (operator, query) in e {
-                    let (json_value, output) = json_parser.parse(json_data, query);
-                }
-                todo!()
-            }
+            Parser::Operator(mut e) => json_processor::Json::json_data_operator(e),
             Parser::Nil => Value::Null,
         }
     }
@@ -89,13 +82,14 @@ impl Parser {
     }
 
     fn parse_pipe(json_data: &Value, data: String) -> Self {
+        let json_parser = JSONParser::new();
+
         let length_compatibily = Regex::new(r"length").unwrap();
         let operator_compatibily =
             Regex::new(r"\s*(?P<pre>.*?)\s*(?P<operator>\+|\*|/|%|-)\s*(?P<post>.*)\s*").unwrap();
 
         if length_compatibily.is_match(&data) {
             return Parser::Length;
-            // TODO also solve filter query
         } else if operator_compatibily.is_match(&data) {
             let mut operators = vec![];
 
@@ -103,7 +97,8 @@ impl Parser {
             loop {
                 if !operator_compatibily.is_match(&data) {
                     if !data.is_empty() {
-                        operators.push((Operator::Nil, data.to_string()));
+                        let (value, _) = json_parser.parse(json_data, data.to_string());
+                        operators.push((Operator::Nil, value));
                     }
 
                     return Parser::Operator(operators);
@@ -113,9 +108,11 @@ impl Parser {
                     if let Some(capture) = operator_compatibily.captures(&data) {
                         let pre = {
                             if let Some(op) = capture.name("pre") {
-                                op.as_str()
+                                let (value, _) =
+                                    json_parser.parse(json_data, op.as_str().to_string());
+                                value
                             } else {
-                                ""
+                                Value::Null
                             }
                         };
 
@@ -137,19 +134,18 @@ impl Parser {
 
                         (pre, post, operator)
                     } else {
-                        ("", "", "")
+                        (Value::Null, "", "")
                     }
                 };
 
                 let operator = Operator::from(operator);
 
-                operators.push((operator, pre.to_string()));
+                operators.push((operator, pre));
 
                 data = post.to_string();
             }
         }
 
-        let json_parser = JSONParser::new();
         let (json_value, output) = json_parser.parse(json_data, data);
 
         Parser::JSON(json_value)
@@ -292,53 +288,51 @@ mod test_parser {
         }
     }
 
-    // #[test]
-    // fn test_piped_operator() {
-    //     let tests = [
-    //         TestParser {
-    //             query: String::from(". | {a: .a} + {b: .b} + {c: .c} + {a: .c}"),
-    //             json_types: vec![
-    //                 Parser::String(vec![ParsedFilter::Nil]),
-    //                 Parser::Operator(vec![
-    //                     (Operator::Addition, String::from("{a: .a}")),
-    //                     (Operator::Addition, String::from("{b: .b}")),
-    //                     (Operator::Addition, String::from("{c: .c}")),
-    //                     (Operator::Nil, String::from("{a: .c}")),
-    //                 ]),
-    //             ],
-    //         },
-    //         TestParser {
-    //             query: String::from(". | {a: .a} +{b: .b} + {c: .c} + {a: .c}"),
-    //             json_types: vec![
-    //                 Parser::String(vec![ParsedFilter::Nil]),
-    //                 Parser::Operator(vec![
-    //                     (Operator::Addition, String::from("{a: .a}")),
-    //                     (Operator::Addition, String::from("{b: .b}")),
-    //                     (Operator::Addition, String::from("{c: .c}")),
-    //                     (Operator::Nil, String::from("{a: .c}")),
-    //                 ]),
-    //             ],
-    //         },
-    //         TestParser {
-    //             query: String::from(". | {a: .a}+{b: .b}+{c: .c}+{a: .c} | length"),
-    //             json_types: vec![
-    //                 Parser::String(vec![ParsedFilter::Nil]),
-    //                 Parser::Operator(vec![
-    //                     (Operator::Addition, String::from("{a: .a}")),
-    //                     (Operator::Addition, String::from("{b: .b}")),
-    //                     (Operator::Addition, String::from("{c: .c}")),
-    //                     (Operator::Nil, String::from("{a: .c}")),
-    //                 ]),
-    //                 Parser::Length,
-    //             ],
-    //         },
-    //     ];
+    #[test]
+    fn test_piped_operator() {
+        let tests = [
+            TestParser {
+                query: String::from(". | {a: .a} + {b: .b} + {c: .c} + {a: .c}"),
+                result: serde_json::json!({
+                    "a": true,
+                    "b": 1,
+                    "c": true,
+                }),
+                json: serde_json::json!({
+                    "a": "Hello",
+                    "b": 1,
+                    "c": true,
+                }),
+            },
+            TestParser {
+                query: String::from(". | {a: .a} + {b: {a: .b}} + {c: .c} + {a: .c}"),
+                result: serde_json::json!({
+                    "a": true,
+                    "b": {"a": 1},
+                    "c": true,
+                }),
+                json: serde_json::json!({
+                    "a": "Hello",
+                    "b": 1,
+                    "c": true,
+                }),
+            },
+            TestParser {
+                query: String::from(". | {a: .a} + {b: {a: .b}} + {c: .c} + {a: .c} | length"),
+                result: serde_json::json!(3.0),
+                json: serde_json::json!({
+                    "a": "Hello",
+                    "b": 1,
+                    "c": true,
+                }),
+            },
+        ];
 
-    //     for (i, test) in tests.into_iter().enumerate() {
-    //         let parsed = Parser::parse(&test.query);
-    //         assert_eq!(parsed, test.json_types, "Failed testing index {}", i);
-    //     }
-    // }
+        for (i, test) in tests.into_iter().enumerate() {
+            let parsed = Parser::parse(&test.json, &test.query);
+            assert_eq!(parsed, test.result, "Failed testing index {}", i);
+        }
+    }
 }
 
 mod test_json_types {
@@ -367,32 +361,32 @@ mod test_json_types {
         }
     }
 
-    #[test]
-    fn find_operators() {
-        let tests = [
-            TestParser {
-                query: String::from("{a: 1} + {b: 2} + {c: 3} + {a: 42}"),
-                json_types: vec![Parser::Operator(vec![
-                    (Operator::Addition, String::from("{a: 1}")),
-                    (Operator::Addition, String::from("{b: 2}")),
-                    (Operator::Addition, String::from("{c: 3}")),
-                    (Operator::Nil, String::from("{a: 42}")),
-                ])],
-            },
-            TestParser {
-                query: String::from("{a: 1}+{b: 2}%{c: 3}-{a: 42}"),
-                json_types: vec![Parser::Operator(vec![
-                    (Operator::Addition, String::from("{a: 1}")),
-                    (Operator::Modulo, String::from("{b: 2}")),
-                    (Operator::Subtration, String::from("{c: 3}")),
-                    (Operator::Nil, String::from("{a: 42}")),
-                ])],
-            },
-        ];
+    // #[test]
+    // fn find_operators() {
+    //     let tests = [
+    //         TestParser {
+    //             query: String::from("{a: 1} + {b: 2} + {c: 3} + {a: 42}"),
+    //             json_types: vec![Parser::Operator(vec![
+    //                 (Operator::Addition, String::from("{a: 1}")),
+    //                 (Operator::Addition, String::from("{b: 2}")),
+    //                 (Operator::Addition, String::from("{c: 3}")),
+    //                 (Operator::Nil, String::from("{a: 42}")),
+    //             ])],
+    //         },
+    //         TestParser {
+    //             query: String::from("{a: 1}+{b: 2}%{c: 3}-{a: 42}"),
+    //             json_types: vec![Parser::Operator(vec![
+    //                 (Operator::Addition, String::from("{a: 1}")),
+    //                 (Operator::Modulo, String::from("{b: 2}")),
+    //                 (Operator::Subtration, String::from("{c: 3}")),
+    //                 (Operator::Nil, String::from("{a: 42}")),
+    //             ])],
+    //         },
+    //     ];
 
-        for (i, test) in tests.iter().enumerate() {
-            let parsed = Parser::parse_pipe(&Value::Null, test.query.clone());
-            assert_eq!(parsed, test.json_types[0], "Failed testing index {}", i);
-        }
-    }
+    //     for (i, test) in tests.iter().enumerate() {
+    //         let parsed = Parser::parse_pipe(&Value::Null, test.query.clone());
+    //         assert_eq!(parsed, test.json_types[0], "Failed testing index {}", i);
+    //     }
+    // }
 }
