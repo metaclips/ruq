@@ -7,6 +7,7 @@ use super::parser::Parser;
 
 #[derive(Debug, Clone)]
 pub struct JSONParser {
+    array_compatibility: Regex,
     json_compatibility: Regex,
     filter_compatibility: Regex,
     number_compatibility: Regex,
@@ -16,6 +17,7 @@ pub struct JSONParser {
 #[derive(Debug, PartialEq)]
 pub enum Output {
     Json,
+    Array,
     Filter,
     Number,
     String,
@@ -24,8 +26,10 @@ pub enum Output {
 
 impl JSONParser {
     pub fn new() -> Self {
+        let array_compatibility: Regex =
+            Regex::new(r"\s*^\[((?P<other>.*),)?\s*(?P<value>.*)\s*\]$").unwrap();
         let json_compatibility: Regex =
-            Regex::new(r"\s*\{((?P<other>.*),)?(\s*(?P<key>\S+)\s*:\s*(?P<value>.*)\s*)\}")
+            Regex::new(r#"\s*^\{((?P<other>.*),)?(\s*(?P<key>\S+)\s*:\s*(?P<value>.*)\s*)\}$"#)
                 .unwrap();
         let filter_compatibility: Regex =
             Regex::new(r"(\.(?P<key>\w*)\s*(\[(?P<index>\d+)\])?)").unwrap();
@@ -33,6 +37,7 @@ impl JSONParser {
         let string_compatibility: Regex = Regex::new(r#"\s*"(?P<value>.*)"\s*"#).unwrap();
 
         Self {
+            array_compatibility,
             json_compatibility,
             filter_compatibility,
             number_compatibility,
@@ -48,13 +53,20 @@ impl JSONParser {
                 let (key, value, other) = {
                     let capture = self.json_compatibility.captures(&query).unwrap();
 
-                    let key = capture.name("key").unwrap().as_str().to_string();
+                    let mut key = capture.name("key").unwrap().as_str().to_string();
                     let value = capture.name("value").unwrap().as_str().to_string();
 
                     let other = match capture.name("other") {
                         Some(e) => e.as_str().to_string(),
                         None => "".to_string(),
                     };
+
+                    if (key.starts_with("\"") && key.ends_with("\""))
+                        || (key.starts_with("'") && key.ends_with("'"))
+                    {
+                        key.remove(0);
+                        key.remove(key.len() - 1);
+                    }
 
                     (key, value, other)
                 };
@@ -117,6 +129,35 @@ impl JSONParser {
             }
 
             (Value::Null, Output::Filter)
+        } else if self.array_compatibility.is_match(&query) {
+            let mut array_value = vec![];
+            loop {
+                let (value, other) = {
+                    let capture = self.array_compatibility.captures(&query).unwrap();
+
+                    let value = capture.name("value").unwrap().as_str().to_string();
+
+                    let other = match capture.name("other") {
+                        Some(e) => e.as_str().to_string(),
+                        None => "".to_string(),
+                    };
+
+                    (value, other)
+                };
+
+                let (value, _) = self.parse(json, value);
+
+                array_value.push(value);
+
+                if other.is_empty() {
+                    break;
+                }
+
+                query = format!("[{other}]");
+            }
+
+            array_value.reverse();
+            (array_value.into(), Output::Array)
         } else if self.string_compatibility.is_match(&query) {
             let capture = self.string_compatibility.captures(&query).unwrap();
 

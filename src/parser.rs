@@ -335,6 +335,26 @@ mod test_parser {
                     "c": true,
                 }),
             },
+            TestParser {
+                query: String::from(r#". | ["xml", "json"] - ["xml"]"#),
+                result: Value::from_str(r#"["json"]"#).unwrap(),
+                json: serde_json::json!({}),
+            },
+            TestParser {
+                query: String::from(r#". | ["xml", "json"] - ["xml"]"#),
+                result: Value::from_str(r#"["json"]"#).unwrap(),
+                json: serde_json::json!({}),
+            },
+            TestParser {
+                query: String::from(r#"[{"xml": 1}, {"yaml": 2}] - [{"xml": 1}]"#),
+                result: Value::from_str(r#"[{"yaml": 2}]"#).unwrap(),
+                json: serde_json::json!({}),
+            },
+            TestParser {
+                query: String::from(r#"[{"xml": 1}, {"yaml": 2}] - [{"xml": 2}]"#),
+                result: Value::from_str(r#"[{"xml": 1}, {"yaml": 2}]"#).unwrap(),
+                json: serde_json::json!({}),
+            },
         ];
 
         for (i, test) in tests.into_iter().enumerate() {

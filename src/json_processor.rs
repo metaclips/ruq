@@ -16,9 +16,7 @@ impl Json {
         for (operator, value) in json.drain(1..) {
             let value = match recent_operator {
                 Operator::Addition => Self::add_json_data(recent_value, value),
-                Operator::Subtration => {
-                    todo!()
-                }
+                Operator::Subtration => Self::subtract_json_data(recent_value, value),
                 Operator::Multiplication => {
                     todo!()
                 }
@@ -55,6 +53,32 @@ impl Json {
             }
             (Value::String(a), Value::String(e)) => [a, e].concat().into(),
             _ => panic!("{:?} and {:?} cannot be added", pre_type_id, post_type_id),
+        }
+    }
+
+    fn subtract_json_data(pre: Value, post: Value) -> Value {
+        let pre_type_id = pre.to_string();
+        let post_type_id = post.to_string();
+        match (pre, post) {
+            (Value::Array(e), Value::Array(f)) => {
+                let mut result = vec![];
+
+                for value in e {
+                    if !f.contains(&value) {
+                        result.push(value)
+                    }
+                }
+
+                result.into()
+            }
+            (Value::Number(a), Value::Number(e)) => {
+                let value = a.as_f64().unwrap() - e.as_f64().unwrap();
+                return value.into();
+            }
+            _ => panic!(
+                "{:?} and {:?} cannot be subtracted",
+                pre_type_id, post_type_id
+            ),
         }
     }
 }
