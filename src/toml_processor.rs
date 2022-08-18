@@ -1,4 +1,4 @@
-use crate::json_processor::Json;
+use crate::json_parser::Json;
 
 use super::processor::Processor;
 
@@ -23,8 +23,8 @@ impl Processor for Toml {
     }
 
     fn to_json(&self) -> Json {
-        let data = serde_json::to_value(self.data.clone()).unwrap();
-        Json { data }
+        let json = serde_json::to_value(self.data.clone()).unwrap();
+        Json { json }
     }
 }
 
@@ -76,5 +76,5 @@ phones = ["+44 1234567", "+44 2345678"]
     }"#,
     )
     .unwrap();
-    assert_eq!(json_data.data, json_val)
+    assert_eq!(json_data.json, json_val)
 }
