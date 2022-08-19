@@ -124,6 +124,7 @@ impl Json {
                 return value.into();
             }
             (Value::String(a), Value::String(e)) => [a, e].concat().into(),
+            (Value::Number(e), Value::Null) | (Value::Null, Value::Number(e)) => e.into(),
             _ => panic!("{:?} and {:?} cannot be added", pre_type_id, post_type_id),
         }
     }
@@ -158,28 +159,34 @@ impl Json {
         let pre_type_id = pre.to_string();
         let post_type_id = post.to_string();
         match (pre, post) {
-            (Value::Object(a), Value::Object(e)) => {
+            (Value::Object(a), Value::Object(mut e)) => {
                 let mut result = Map::new();
 
                 for (key, pre_value) in a {
-                    if let Some(post_value) = e.get(&key) {
-                        result.insert(key, Self::multiply_json_data(pre_value, post_value.clone()));
+                    if let Some(post_value) = e.get(key.as_str()) {
+                        result.insert(
+                            key.clone(),
+                            Self::multiply_json_data(pre_value, post_value.clone()),
+                        );
+                        e.remove(&key);
                     } else {
+                        println!("{key} {}", pre_value);
                         result.insert(key, pre_value);
                     }
                 }
+
+                result.extend(e);
+                result.into()
             }
             (Value::Number(a), Value::Number(e)) => {
                 let value = a.as_f64().unwrap() * e.as_f64().unwrap();
-                return value.into();
+                value.into()
             }
             _ => panic!(
                 "{:?} and {:?} cannot be multiplied",
                 pre_type_id, post_type_id
             ),
         }
-
-        todo!()
     }
 }
 

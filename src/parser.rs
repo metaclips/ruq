@@ -281,6 +281,16 @@ mod test_parser {
                 }),
             },
             TestParser {
+                query: String::from(r#". | .d + 1 | length"#),
+                result: serde_json::json!(1.0),
+                json: serde_json::json!({}),
+            },
+            TestParser {
+                query: String::from(r#". | 2 + .d  | length"#),
+                result: serde_json::json!(2.0),
+                json: serde_json::json!({}),
+            },
+            TestParser {
                 query: String::from(r#". | ["xml", "json"] - ["xml"]"#),
                 result: Value::from_str(r#"["json"]"#).unwrap(),
                 json: serde_json::json!({}),
@@ -300,11 +310,11 @@ mod test_parser {
                 result: Value::from_str(r#"[{"xml": 1}, {"yaml": 2}]"#).unwrap(),
                 json: serde_json::json!({}),
             },
-            // TestParser {
-            //     query: String::from(r#"{"k": {"a": 1, "b": 2}} * {"k": {"a": 0,"c": 3}}"#),
-            //     result: Value::from_str(r#"{"k": {"a": 0, "b": 2, "c": 3}}"#).unwrap(),
-            //     json: serde_json::json!({}),
-            // },
+            TestParser {
+                query: String::from(r#"{"k": {"a": 1, "b": 2}} * {"k": {"a": 0,"c": 3}}"#),
+                result: Value::from_str(r#"{"k": {"a": 0.0, "b": 2, "c": 3}}"#).unwrap(),
+                json: serde_json::json!({}),
+            },
         ];
 
         for (i, test) in tests.into_iter().enumerate() {
