@@ -24,7 +24,7 @@ impl Processor for Toml {
 
     fn to_json(&self) -> Json {
         let json = serde_json::to_value(self.data.clone()).unwrap();
-        Json { json }
+        Json::new(json)
     }
 }
 

@@ -97,7 +97,7 @@ impl Parser {
             loop {
                 if !operator_compatibily.is_match(&data) {
                     if !data.is_empty() {
-                        let value = json_parser.create_valid_json(data.to_string());
+                        let value = json_parser.parse_json(data.to_string());
                         operators.push((Operator::Nil, value));
                     }
 
@@ -108,7 +108,7 @@ impl Parser {
                     if let Some(capture) = operator_compatibily.captures(&data) {
                         let pre = {
                             if let Some(op) = capture.name("pre") {
-                                let value = json_parser.create_valid_json(op.as_str().to_string());
+                                let value = json_parser.parse_json(op.as_str().to_string());
                                 value
                             } else {
                                 Value::Null
@@ -145,7 +145,7 @@ impl Parser {
             }
         }
 
-        Parser::JSON(json_parser.create_valid_json(data))
+        Parser::JSON(json_parser.parse_json(data))
     }
 }
 
