@@ -65,7 +65,7 @@ impl Json {
                     let mut value = self.json.clone();
                     for filter_capture in self.filter_regex.captures_iter(e) {
                         let key = filter_capture.name("key").unwrap().as_str();
-                        if !key.is_empty() || key != "." {
+                        if !key.is_empty() {
                             value = value.get(key).cloned().unwrap_or_default();
                         }
 
