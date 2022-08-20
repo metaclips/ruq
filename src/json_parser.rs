@@ -1,7 +1,7 @@
-use std::str::FromStr;
+use std::{str::FromStr, vec};
 
 use regex::Regex;
-use serde_json::{Map, Value};
+use serde_json::{Map, Number, Value};
 
 use super::parser::{Operator, Parser};
 
@@ -23,7 +23,7 @@ pub enum Output {
 
 impl Json {
     pub fn new(json: Value) -> Self {
-        let filter_regex = Regex::new(r"(\.(?P<key>\w*)\s*(\[(?P<index>\d+)\])?)").unwrap();
+        let filter_regex = Regex::new(r"(\.(?P<key>\w*)\s*(\[(?P<index>\d+?)\])?)").unwrap();
         Self { json, filter_regex }
     }
 
@@ -34,7 +34,7 @@ impl Json {
     }
 
     fn convert_filter_to_string(&self, mut query: String) -> Value {
-        let parser = Regex::new(r#"(?P<filter>(\.\w*(\[\d+\])?)+)"#).unwrap();
+        let parser = Regex::new(r#"(?P<filter>(\.\w*(\[\d*\])?)+)"#).unwrap();
 
         for capture in parser.captures_iter(query.clone().as_str()) {
             let filter = capture.name("filter").unwrap().as_str();
@@ -92,15 +92,13 @@ impl Json {
                 Operator::Addition => Self::add_json_data(recent_value, value),
                 Operator::Subtration => Self::subtract_json_data(recent_value, value),
                 Operator::Multiplication => Self::multiply_json_data(recent_value, value),
-                Operator::Division => {
-                    todo!()
-                }
+                Operator::Division {
+                    ignore_infinite_divisor,
+                } => Self::divide_json_data(recent_value, value, ignore_infinite_divisor),
                 Operator::Modulo => {
                     todo!()
                 }
-                Operator::Nil => {
-                    todo!()
-                }
+                Operator::Nil => unreachable!(),
             };
 
             recent_operator = operator.clone();
@@ -182,10 +180,108 @@ impl Json {
                 let value = a.as_f64().unwrap() * e.as_f64().unwrap();
                 value.into()
             }
+            (Value::String(mut e), Value::Number(a)) | (Value::Number(a), Value::String(mut e)) => {
+                let a = a.as_u64().unwrap();
+                if a == 0 {
+                    return Value::Null;
+                }
+
+                for _ in 0..(a - 1) {
+                    e += e.clone().as_str();
+                }
+                e.into()
+            }
             _ => panic!(
                 "{:?} and {:?} cannot be multiplied",
                 pre_type_id, post_type_id
             ),
+        }
+    }
+
+    fn divide_json_data(pre: Value, post: Value, ignore_infinite_divisor: bool) -> Value {
+        let pre_type_id = pre.to_string();
+        let post_type_id = post.to_string();
+
+        let convert_to_f64 = |value: Number| {
+            if value.is_f64() {
+                value.as_f64().unwrap()
+            } else if value.is_i64() {
+                value.as_i64().unwrap() as f64
+            } else if value.is_u64() {
+                value.as_u64().unwrap() as f64
+            } else {
+                0.0
+            }
+        };
+
+        match (pre, post) {
+            (Value::String(e), Value::String(a)) => {
+                let value: Vec<_> = e.split(&a).collect();
+                value.into()
+            }
+            (Value::Number(e), Value::Array(a)) => {
+                let mut result = vec![];
+                let e = convert_to_f64(e);
+
+                for value in a {
+                    match value {
+                        Value::Number(a) => {
+                            let a = convert_to_f64(a);
+
+                            if a == 0.0 {
+                                if !ignore_infinite_divisor {
+                                    panic!(
+                                        "{:?} and {:?} cannot be divided",
+                                        pre_type_id, post_type_id
+                                    )
+                                }
+
+                                continue;
+                            }
+
+                            result.push(e / a)
+                        }
+                        _ => panic!("{:?} and {:?} cannot be divided", pre_type_id, post_type_id),
+                    }
+                }
+
+                result.into()
+            }
+            (Value::Array(e), Value::Number(a)) => {
+                let mut result = vec![];
+                let a = convert_to_f64(a);
+                if a == 0.0 {
+                    if !ignore_infinite_divisor {
+                        panic!("{:?} and {:?} cannot be divided", pre_type_id, post_type_id)
+                    }
+
+                    return Value::Null;
+                }
+
+                for value in e {
+                    match value {
+                        Value::Number(e) => {
+                            let e = convert_to_f64(e);
+
+                            result.push(e / a)
+                        }
+                        _ => panic!("{:?} and {:?} cannot be divided", pre_type_id, post_type_id),
+                    }
+                }
+
+                result.into()
+            }
+            (Value::Number(e), Value::Number(a)) => {
+                let e = convert_to_f64(e);
+                let a = convert_to_f64(a);
+
+                if a == 0.0 {
+                    panic!("{:?} and {:?} cannot be divided", pre_type_id, post_type_id);
+                }
+
+                (e / a).into()
+            }
+            _ => panic!("{:?} and {:?} cannot be divided", pre_type_id, post_type_id),
         }
     }
 }

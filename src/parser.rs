@@ -17,7 +17,7 @@ pub enum Operator {
     Addition,
     Subtration,
     Multiplication,
-    Division,
+    Division { ignore_infinite_divisor: bool },
     Modulo,
     Nil,
 }
@@ -28,7 +28,7 @@ impl Parser {
     }
 
     fn parse(json_data: Value, data: &str) -> Value {
-        let parser = Regex::new(r"\s*(?P<pre>.*?)(\s*)\|(\s*)(?P<post>.*)\s*").unwrap();
+        let parser = Regex::new(r"\s*(?P<pre>.*?)\s*\|\s*(?P<post>.*)\s*").unwrap();
 
         let (mut pre, mut post) = Self::regexer(&parser, data);
 
@@ -106,9 +106,28 @@ impl Parser {
 
                 let (pre, post, operator) = {
                     if let Some(capture) = operator_compatibily.captures(&data) {
+                        let mut operator = {
+                            if let Some(op) = capture.name("operator") {
+                                Operator::from(op.as_str())
+                            } else {
+                                Operator::Nil
+                            }
+                        };
+
+                        // Bug here: we need to split as pre: (1 and post .)?
                         let pre = {
                             if let Some(op) = capture.name("pre") {
-                                let value = json_parser.parse_json(op.as_str().to_string());
+                                let op = op.as_str();
+                                if op.starts_with("(") && op.ends_with(")?") {
+                                    match &mut operator {
+                                        Operator::Division {
+                                            ignore_infinite_divisor,
+                                        } => *ignore_infinite_divisor = true,
+                                        _ => {}
+                                    }
+                                }
+
+                                let value = json_parser.parse_json(op.to_owned());
                                 value
                             } else {
                                 Value::Null
@@ -123,21 +142,11 @@ impl Parser {
                             }
                         };
 
-                        let operator = {
-                            if let Some(op) = capture.name("operator") {
-                                op.as_str()
-                            } else {
-                                ""
-                            }
-                        };
-
                         (pre, post, operator)
                     } else {
-                        (Value::Null, "", "")
+                        (Value::Null, "", Operator::Nil)
                     }
                 };
-
-                let operator = Operator::from(operator);
 
                 operators.push((operator, pre));
 
@@ -154,7 +163,9 @@ impl From<&str> for Operator {
         match val {
             "+" => Self::Addition,
             "-" => Self::Subtration,
-            "/" => Self::Division,
+            "/" => Self::Division {
+                ignore_infinite_divisor: false,
+            },
             "*" => Self::Multiplication,
             "%" => Self::Modulo,
             _ => Self::Nil,
@@ -175,6 +186,16 @@ mod test_parser {
     #[test]
     fn test_nil_parser() {
         let tests = [
+            TestParser {
+                query: String::from(".[]"),
+                result: Value::from_str(r#"[1,0,-1]"#).unwrap(),
+                json: Value::from_str(r#"[1,0,-1]"#).unwrap(),
+            },
+            TestParser {
+                query: String::from(".[].[0]"),
+                result: Value::from_str(r#"1"#).unwrap(),
+                json: Value::from_str(r#"[1,0,-1]"#).unwrap(),
+            },
             TestParser {
                 query: String::from("."),
                 result: Value::from_str(r#"{}"#).unwrap(),
@@ -233,6 +254,11 @@ mod test_parser {
     fn test_piped_operator() {
         let tests = [
             TestParser {
+                query: String::from(r#".[] | (1 / .)?"#),
+                result: serde_json::json!([1, 0, -1]),
+                json: serde_json::json!([1, -1]),
+            },
+            TestParser {
                 query: String::from(r#". | {"a": .a} + {"b": .b} + {"c": .c} + {"a": .c}"#),
                 result: serde_json::json!({
                     "a": true,
@@ -286,9 +312,29 @@ mod test_parser {
                 json: serde_json::json!({}),
             },
             TestParser {
-                query: String::from(r#". | 2 + .d  | length"#),
+                query: String::from(r#"2 + .d  | length"#),
                 result: serde_json::json!(2.0),
                 json: serde_json::json!({}),
+            },
+            TestParser {
+                query: String::from(r#""Hello" * 2"#),
+                result: serde_json::json!("HelloHello"),
+                json: serde_json::json!({}),
+            },
+            TestParser {
+                query: String::from(r#". / ", ""#),
+                result: serde_json::json!(["a", "b,c,d", "e"]),
+                json: serde_json::json!("a, b,c,d, e"),
+            },
+            TestParser {
+                query: String::from(r#"10 / . * 3"#),
+                result: serde_json::json!(5.0),
+                json: serde_json::json!(6),
+            },
+            TestParser {
+                query: String::from(r#".[] | (1 / .)?"#),
+                result: serde_json::json!([1, 0, -1]),
+                json: serde_json::json!([1, -1]),
             },
             TestParser {
                 query: String::from(r#". | ["xml", "json"] - ["xml"]"#),
