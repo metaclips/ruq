@@ -94,6 +94,7 @@ impl Parser {
             let mut operators = vec![];
 
             let mut data = data;
+            let mut ignore_infinite_divisor_ = false;
             loop {
                 if !operator_compatibily.is_match(&data) {
                     if !data.is_empty() {
@@ -114,33 +115,36 @@ impl Parser {
                             }
                         };
 
-                        // Bug here: we need to split as pre: (1 and post .)?
-                        let pre = {
+                        let mut pre = {
                             if let Some(op) = capture.name("pre") {
-                                let op = op.as_str();
-                                if op.starts_with("(") && op.ends_with(")?") {
-                                    match &mut operator {
-                                        Operator::Division {
-                                            ignore_infinite_divisor,
-                                        } => *ignore_infinite_divisor = true,
-                                        _ => {}
-                                    }
-                                }
-
-                                let value = json_parser.parse_json(op.to_owned());
-                                value
+                                op.as_str()
                             } else {
-                                Value::Null
+                                ""
                             }
                         };
 
-                        let post = {
+                        let mut post = {
                             if let Some(op) = capture.name("post") {
                                 op.as_str()
                             } else {
                                 ""
                             }
                         };
+
+                        if pre.starts_with("(") && post.ends_with(")?") {
+                            ignore_infinite_divisor_ = true;
+                            pre = pre.strip_prefix("(").unwrap();
+                            post = post.strip_suffix(")?").unwrap();
+                        }
+
+                        match &mut operator {
+                            Operator::Division {
+                                ignore_infinite_divisor,
+                            } => *ignore_infinite_divisor = ignore_infinite_divisor_,
+                            _ => {}
+                        }
+
+                        let pre = json_parser.parse_json(pre.to_owned());
 
                         (pre, post, operator)
                     } else {
@@ -254,11 +258,6 @@ mod test_parser {
     fn test_piped_operator() {
         let tests = [
             TestParser {
-                query: String::from(r#".[] | (1 / .)?"#),
-                result: serde_json::json!([1, 0, -1]),
-                json: serde_json::json!([1, -1]),
-            },
-            TestParser {
                 query: String::from(r#". | {"a": .a} + {"b": .b} + {"c": .c} + {"a": .c}"#),
                 result: serde_json::json!({
                     "a": true,
@@ -333,8 +332,13 @@ mod test_parser {
             },
             TestParser {
                 query: String::from(r#".[] | (1 / .)?"#),
-                result: serde_json::json!([1, 0, -1]),
-                json: serde_json::json!([1, -1]),
+                result: serde_json::json!([1.0, -1.0]),
+                json: serde_json::json!([1, 0, -1]),
+            },
+            TestParser {
+                query: String::from(r#".[] | (1 / 1 / .)?"#),
+                result: serde_json::json!([1.0, -1.0]),
+                json: serde_json::json!([1, 0, -1]),
             },
             TestParser {
                 query: String::from(r#". | ["xml", "json"] - ["xml"]"#),
