@@ -95,9 +95,9 @@ impl Json {
                 Operator::Division {
                     ignore_infinite_divisor,
                 } => Self::divide_json_data(recent_value, value, ignore_infinite_divisor),
-                Operator::Modulo => {
-                    todo!()
-                }
+                Operator::Modulo {
+                    ignore_infinite_divisor,
+                } => Self::modulo_json_data(recent_value, value, ignore_infinite_divisor),
                 Operator::Nil => unreachable!(),
             };
 
@@ -202,18 +202,6 @@ impl Json {
         let pre_type_id = pre.to_string();
         let post_type_id = post.to_string();
 
-        let convert_to_f64 = |value: Number| {
-            if value.is_f64() {
-                value.as_f64().unwrap()
-            } else if value.is_i64() {
-                value.as_i64().unwrap() as f64
-            } else if value.is_u64() {
-                value.as_u64().unwrap() as f64
-            } else {
-                0.0
-            }
-        };
-
         match (pre, post) {
             (Value::String(e), Value::String(a)) => {
                 let value: Vec<_> = e.split(&a).collect();
@@ -221,12 +209,12 @@ impl Json {
             }
             (Value::Number(e), Value::Array(a)) => {
                 let mut result = vec![];
-                let e = convert_to_f64(e);
+                let e = Self::convert_to_f64(e);
 
                 for value in a {
                     match value {
                         Value::Number(a) => {
-                            let a = convert_to_f64(a);
+                            let a = Self::convert_to_f64(a);
 
                             if a == 0.0 {
                                 if !ignore_infinite_divisor {
@@ -249,7 +237,7 @@ impl Json {
             }
             (Value::Array(e), Value::Number(a)) => {
                 let mut result = vec![];
-                let a = convert_to_f64(a);
+                let a = Self::convert_to_f64(a);
                 if a == 0.0 {
                     if !ignore_infinite_divisor {
                         panic!("{:?} and {:?} cannot be divided", pre_type_id, post_type_id)
@@ -261,7 +249,7 @@ impl Json {
                 for value in e {
                     match value {
                         Value::Number(e) => {
-                            let e = convert_to_f64(e);
+                            let e = Self::convert_to_f64(e);
 
                             result.push(e / a)
                         }
@@ -272,8 +260,8 @@ impl Json {
                 result.into()
             }
             (Value::Number(e), Value::Number(a)) => {
-                let e = convert_to_f64(e);
-                let a = convert_to_f64(a);
+                let e = Self::convert_to_f64(e);
+                let a = Self::convert_to_f64(a);
 
                 if a == 0.0 {
                     panic!("{:?} and {:?} cannot be divided", pre_type_id, post_type_id);
@@ -282,6 +270,104 @@ impl Json {
                 (e / a).into()
             }
             _ => panic!("{:?} and {:?} cannot be divided", pre_type_id, post_type_id),
+        }
+    }
+
+    fn convert_to_f64(value: Number) -> f64 {
+        if value.is_f64() {
+            value.as_f64().unwrap()
+        } else if value.is_i64() {
+            value.as_i64().unwrap() as f64
+        } else if value.is_u64() {
+            value.as_u64().unwrap() as f64
+        } else {
+            0.0
+        }
+    }
+
+    fn modulo_json_data(pre: Value, post: Value, ignore_infinite_divisor: bool) -> Value {
+        let pre_type_id = pre.to_string();
+        let post_type_id = post.to_string();
+
+        match (pre, post) {
+            (Value::Number(e), Value::Array(a)) => {
+                let mut result = vec![];
+                let e = Self::convert_to_f64(e);
+
+                for value in a {
+                    match value {
+                        Value::Number(a) => {
+                            let a = Self::convert_to_f64(a);
+
+                            if a == 0.0 {
+                                if !ignore_infinite_divisor {
+                                    panic!(
+                                        "Cannot compute {:?} and {:?} modulo",
+                                        pre_type_id, post_type_id
+                                    )
+                                }
+
+                                continue;
+                            }
+
+                            result.push(e % a)
+                        }
+                        _ => panic!(
+                            "Cannot compute {:?} and {:?} modulo",
+                            pre_type_id, post_type_id
+                        ),
+                    }
+                }
+
+                result.into()
+            }
+            (Value::Array(e), Value::Number(a)) => {
+                let mut result = vec![];
+                let a = Self::convert_to_f64(a);
+                if a == 0.0 {
+                    if !ignore_infinite_divisor {
+                        panic!(
+                            "Cannot compute {:?} and {:?} modulo",
+                            pre_type_id, post_type_id
+                        )
+                    }
+
+                    return Value::Null;
+                }
+
+                for value in e {
+                    match value {
+                        Value::Number(e) => {
+                            let e = Self::convert_to_f64(e);
+
+                            result.push(e % a)
+                        }
+                        _ => panic!(
+                            "Cannot compute {:?} and {:?} modulo",
+                            pre_type_id, post_type_id
+                        ),
+                    }
+                }
+
+                result.into()
+            }
+            (Value::Number(e), Value::Number(a)) => {
+                let e = Self::convert_to_f64(e);
+                let a = Self::convert_to_f64(a);
+
+                if a == 0.0 {
+                    panic!(
+                        "Cannot compute {:?} and {:?} modulo",
+                        pre_type_id, post_type_id
+                    );
+                }
+
+                (e % a).into()
+            }
+            _ => panic!(
+                "Cannot compute {:?} and {:?} modulo",
+                pre_type_id, post_type_id
+            ),
         }
     }
 }

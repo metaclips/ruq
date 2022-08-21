@@ -18,7 +18,7 @@ pub enum Operator {
     Subtration,
     Multiplication,
     Division { ignore_infinite_divisor: bool },
-    Modulo,
+    Modulo { ignore_infinite_divisor: bool },
     Nil,
 }
 
@@ -141,6 +141,9 @@ impl Parser {
                             Operator::Division {
                                 ignore_infinite_divisor,
                             } => *ignore_infinite_divisor = ignore_infinite_divisor_,
+                            Operator::Modulo {
+                                ignore_infinite_divisor,
+                            } => *ignore_infinite_divisor = ignore_infinite_divisor_,
                             _ => {}
                         }
 
@@ -171,7 +174,9 @@ impl From<&str> for Operator {
                 ignore_infinite_divisor: false,
             },
             "*" => Self::Multiplication,
-            "%" => Self::Modulo,
+            "%" => Self::Modulo {
+                ignore_infinite_divisor: false,
+            },
             _ => Self::Nil,
         }
     }
@@ -337,6 +342,21 @@ mod test_parser {
             },
             TestParser {
                 query: String::from(r#".[] | (1 / 1 / .)?"#),
+                result: serde_json::json!([1.0, -1.0]),
+                json: serde_json::json!([1, 0, -1]),
+            },
+            TestParser {
+                query: String::from(r#"12 % . * 3"#),
+                result: serde_json::json!(6.0),
+                json: serde_json::json!(5),
+            },
+            TestParser {
+                query: String::from(r#".[] | (3 % .)?"#),
+                result: serde_json::json!([1.0, 1.0]),
+                json: serde_json::json!([2, 0, -2]),
+            },
+            TestParser {
+                query: String::from(r#".[] | (3 % 2 / .)?"#),
                 result: serde_json::json!([1.0, -1.0]),
                 json: serde_json::json!([1, 0, -1]),
             },
