@@ -1,18 +1,16 @@
 use regex::Regex;
-use serde_json::Value;
+use serde_json::{Map, Number, Value};
 use std::fmt::Debug;
+use std::str::FromStr;
 
-use crate::json_parser::Json;
-
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Parser {
-    JSON(Value),
+    Json(Value),
     Length,
     Operator(Vec<(Operator, Value)>),
-    Nil,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Operator {
     Addition,
     Subtration,
@@ -22,12 +20,372 @@ pub enum Operator {
     Nil,
 }
 
-impl Parser {
-    pub fn new(json_data: Value, query: &str) -> Value {
-        todo!()
+struct JsonParser {
+    json: Value,
+    filter_regex: Regex,
+    filter_converter: Regex,
+}
+
+impl JsonParser {
+    fn new(json: Value) -> Self {
+        let filter_regex = Regex::new(r"(\.(?P<key>\w*)\s*(\[(?P<index>\d+?)\])?)").unwrap();
+        let filter_converter = Regex::new(r#"(?P<filter>(\.\w*(\[\d*\])?)+)"#).unwrap();
+        Self {
+            json,
+            filter_regex,
+            filter_converter,
+        }
     }
 
-    fn parse(json_data: Value, data: &str) -> Value {
+    fn parse_json(&self, query: String) -> Value {
+        let mut value = self.convert_filter_to_string(query);
+        self.create_valid_json(&mut value);
+        value
+    }
+
+    fn convert_filter_to_string(&self, mut query: String) -> Value {
+        let value = query.clone();
+        for capture in self.filter_converter.captures_iter(&value) {
+            let filter = capture.name("filter").unwrap().as_str();
+            query = self
+                .filter_converter
+                .replace(&query, format!("\"{filter}\""))
+                .to_string();
+        }
+
+        Value::from_str(&query).unwrap()
+    }
+
+    fn create_valid_json(&self, json: &mut Value) {
+        match json {
+            Value::Array(e) => {
+                for value in e {
+                    self.create_valid_json(value)
+                }
+            }
+            Value::Object(e) => {
+                for (_, value) in e {
+                    self.create_valid_json(value)
+                }
+            }
+            Value::String(e) => {
+                if e.starts_with('"') {
+                    return;
+                }
+
+                if e.starts_with('.') {
+                    let mut value = self.json.clone();
+                    for filter_capture in self.filter_regex.captures_iter(e) {
+                        let key = filter_capture.name("key").unwrap().as_str();
+                        if !key.is_empty() {
+                            value = value.get(key).cloned().unwrap_or_default();
+                        }
+
+                        if let Some(e) = filter_capture.name("index") {
+                            value = value
+                                .get(e.as_str().parse::<usize>().unwrap())
+                                .cloned()
+                                .unwrap_or_default()
+                        }
+                    }
+
+                    *json = value
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub fn json_data_operator(mut json: Vec<(Operator, Value)>) -> Value {
+        let (mut recent_operator, mut recent_value) = json.first().unwrap().clone();
+
+        for (operator, value) in json.drain(1..) {
+            let value = match recent_operator {
+                Operator::Addition => Self::add_json_data(recent_value, value),
+                Operator::Subtration => Self::subtract_json_data(recent_value, value),
+                Operator::Multiplication => Self::multiply_json_data(recent_value, value),
+                Operator::Division {
+                    ignore_infinite_divisor,
+                } => Self::divide_json_data(recent_value, value, ignore_infinite_divisor),
+                Operator::Modulo {
+                    ignore_infinite_divisor,
+                } => Self::modulo_json_data(recent_value, value, ignore_infinite_divisor),
+                Operator::Nil => unreachable!(),
+            };
+
+            recent_operator = operator.clone();
+            recent_value = value;
+        }
+
+        recent_value
+    }
+
+    fn add_json_data(pre: Value, post: Value) -> Value {
+        let pre_type_id = pre.to_string();
+        let post_type_id = post.to_string();
+        match (pre, post) {
+            (Value::Array(e), Value::Array(f)) => [e, f].concat().into(),
+            (Value::Object(mut e), Value::Object(mut f)) => {
+                e.append(&mut f);
+                e.into()
+            }
+            (Value::Number(a), Value::Number(e)) => {
+                let value = a.as_f64().unwrap() + e.as_f64().unwrap();
+                value.into()
+            }
+            (Value::String(a), Value::String(e)) => [a, e].concat().into(),
+            (Value::Number(e), Value::Null) | (Value::Null, Value::Number(e)) => e.into(),
+            _ => panic!("{:?} and {:?} cannot be added", pre_type_id, post_type_id),
+        }
+    }
+
+    fn subtract_json_data(pre: Value, post: Value) -> Value {
+        let pre_type_id = pre.to_string();
+        let post_type_id = post.to_string();
+        match (pre, post) {
+            (Value::Array(e), Value::Array(f)) => {
+                let mut result = vec![];
+
+                for value in e {
+                    if !f.contains(&value) {
+                        result.push(value)
+                    }
+                }
+
+                result.into()
+            }
+            (Value::Number(a), Value::Number(e)) => {
+                let value = a.as_f64().unwrap() - e.as_f64().unwrap();
+                value.into()
+            }
+            _ => panic!(
+                "{:?} and {:?} cannot be subtracted",
+                pre_type_id, post_type_id
+            ),
+        }
+    }
+
+    fn multiply_json_data(pre: Value, post: Value) -> Value {
+        let pre_type_id = pre.to_string();
+        let post_type_id = post.to_string();
+        match (pre, post) {
+            (Value::Object(a), Value::Object(mut e)) => {
+                let mut result = Map::new();
+
+                for (key, pre_value) in a {
+                    if let Some(post_value) = e.get(key.as_str()) {
+                        result.insert(
+                            key.clone(),
+                            Self::multiply_json_data(pre_value, post_value.clone()),
+                        );
+                        e.remove(&key);
+                    } else {
+                        println!("{key} {}", pre_value);
+                        result.insert(key, pre_value);
+                    }
+                }
+
+                result.extend(e);
+                result.into()
+            }
+            (Value::Number(a), Value::Number(e)) => {
+                let value = a.as_f64().unwrap() * e.as_f64().unwrap();
+                value.into()
+            }
+            (Value::String(mut e), Value::Number(a)) | (Value::Number(a), Value::String(mut e)) => {
+                let a = a.as_u64().unwrap();
+                if a == 0 {
+                    return Value::Null;
+                }
+
+                for _ in 0..(a - 1) {
+                    e += e.clone().as_str();
+                }
+                e.into()
+            }
+            _ => panic!(
+                "{:?} and {:?} cannot be multiplied",
+                pre_type_id, post_type_id
+            ),
+        }
+    }
+
+    fn divide_json_data(pre: Value, post: Value, ignore_infinite_divisor: bool) -> Value {
+        let pre_type_id = pre.to_string();
+        let post_type_id = post.to_string();
+
+        match (pre, post) {
+            (Value::String(e), Value::String(a)) => {
+                let value: Vec<_> = e.split(&a).collect();
+                value.into()
+            }
+            (Value::Number(e), Value::Array(a)) => {
+                let mut result = vec![];
+                let e = Self::convert_to_f64(e);
+
+                for value in a {
+                    match value {
+                        Value::Number(a) => {
+                            let a = Self::convert_to_f64(a);
+
+                            if a == 0.0 {
+                                if !ignore_infinite_divisor {
+                                    panic!(
+                                        "{:?} and {:?} cannot be divided",
+                                        pre_type_id, post_type_id
+                                    )
+                                }
+
+                                continue;
+                            }
+
+                            result.push(e / a)
+                        }
+                        _ => panic!("{:?} and {:?} cannot be divided", pre_type_id, post_type_id),
+                    }
+                }
+
+                result.into()
+            }
+            (Value::Array(e), Value::Number(a)) => {
+                let mut result = vec![];
+                let a = Self::convert_to_f64(a);
+                if a == 0.0 {
+                    if !ignore_infinite_divisor {
+                        panic!("{:?} and {:?} cannot be divided", pre_type_id, post_type_id)
+                    }
+
+                    return Value::Null;
+                }
+
+                for value in e {
+                    match value {
+                        Value::Number(e) => {
+                            let e = Self::convert_to_f64(e);
+
+                            result.push(e / a)
+                        }
+                        _ => panic!("{:?} and {:?} cannot be divided", pre_type_id, post_type_id),
+                    }
+                }
+
+                result.into()
+            }
+            (Value::Number(e), Value::Number(a)) => {
+                let e = Self::convert_to_f64(e);
+                let a = Self::convert_to_f64(a);
+
+                if a == 0.0 {
+                    panic!("{:?} and {:?} cannot be divided", pre_type_id, post_type_id);
+                }
+
+                (e / a).into()
+            }
+            _ => panic!("{:?} and {:?} cannot be divided", pre_type_id, post_type_id),
+        }
+    }
+
+    fn convert_to_f64(value: Number) -> f64 {
+        if value.is_f64() {
+            value.as_f64().unwrap()
+        } else if value.is_i64() {
+            value.as_i64().unwrap() as f64
+        } else if value.is_u64() {
+            value.as_u64().unwrap() as f64
+        } else {
+            0.0
+        }
+    }
+
+    fn modulo_json_data(pre: Value, post: Value, ignore_infinite_divisor: bool) -> Value {
+        let pre_type_id = pre.to_string();
+        let post_type_id = post.to_string();
+
+        match (pre, post) {
+            (Value::Number(e), Value::Array(a)) => {
+                let mut result = vec![];
+                let e = Self::convert_to_f64(e);
+
+                for value in a {
+                    match value {
+                        Value::Number(a) => {
+                            let a = Self::convert_to_f64(a);
+
+                            if a == 0.0 {
+                                if !ignore_infinite_divisor {
+                                    panic!(
+                                        "Cannot compute {:?} and {:?} modulo",
+                                        pre_type_id, post_type_id
+                                    )
+                                }
+
+                                continue;
+                            }
+
+                            result.push(e % a)
+                        }
+                        _ => panic!(
+                            "Cannot compute {:?} and {:?} modulo",
+                            pre_type_id, post_type_id
+                        ),
+                    }
+                }
+
+                result.into()
+            }
+            (Value::Array(e), Value::Number(a)) => {
+                let mut result = vec![];
+                let a = Self::convert_to_f64(a);
+                if a == 0.0 {
+                    if !ignore_infinite_divisor {
+                        panic!(
+                            "Cannot compute {:?} and {:?} modulo",
+                            pre_type_id, post_type_id
+                        )
+                    }
+
+                    return Value::Null;
+                }
+
+                for value in e {
+                    match value {
+                        Value::Number(e) => {
+                            let e = Self::convert_to_f64(e);
+
+                            result.push(e % a)
+                        }
+                        _ => panic!(
+                            "Cannot compute {:?} and {:?} modulo",
+                            pre_type_id, post_type_id
+                        ),
+                    }
+                }
+
+                result.into()
+            }
+            (Value::Number(e), Value::Number(a)) => {
+                let e = Self::convert_to_f64(e);
+                let a = Self::convert_to_f64(a);
+
+                if a == 0.0 {
+                    panic!(
+                        "Cannot compute {:?} and {:?} modulo",
+                        pre_type_id, post_type_id
+                    );
+                }
+
+                (e % a).into()
+            }
+            _ => panic!(
+                "Cannot compute {:?} and {:?} modulo",
+                pre_type_id, post_type_id
+            ),
+        }
+    }
+}
+
+impl Parser {
+    pub fn parse(json_data: Value, data: &str) -> Value {
         let parser = Regex::new(r"\s*(?P<pre>.*?)\s*\|\s*(?P<post>.*)\s*").unwrap();
 
         let (mut pre, mut post) = Self::regexer(&parser, data);
@@ -44,10 +402,9 @@ impl Parser {
 
     fn query(json_data: Value, query: String) -> Value {
         match Parser::parse_pipe(json_data.clone(), query) {
-            Parser::JSON(e) => e,
+            Parser::Json(e) => e,
             Parser::Length => Self::get_json_length(&json_data).into(),
-            Parser::Operator(mut e) => Json::json_data_operator(e),
-            Parser::Nil => Value::Null,
+            Parser::Operator(e) => JsonParser::json_data_operator(e),
         }
     }
 
@@ -81,8 +438,8 @@ impl Parser {
         (data, None)
     }
 
-    fn parse_pipe(json_data: Value, mut data: String) -> Self {
-        let json_parser = Json::new(json_data);
+    fn parse_pipe(json_data: Value, data: String) -> Self {
+        let json_parser = JsonParser::new(json_data);
 
         let length_compatibily = Regex::new(r"length").unwrap();
         let operator_compatibily =
@@ -98,7 +455,7 @@ impl Parser {
             loop {
                 if !operator_compatibily.is_match(&data) {
                     if !data.is_empty() {
-                        let value = json_parser.parse_json(data.to_string());
+                        let value = json_parser.parse_json(data);
                         operators.push((Operator::Nil, value));
                     }
 
@@ -131,9 +488,9 @@ impl Parser {
                             }
                         };
 
-                        if pre.starts_with("(") && post.ends_with(")?") {
+                        if pre.starts_with('(') && post.ends_with(")?") {
                             ignore_infinite_divisor_ = true;
-                            pre = pre.strip_prefix("(").unwrap();
+                            pre = pre.strip_prefix('(').unwrap();
                             post = post.strip_suffix(")?").unwrap();
                         }
 
@@ -161,7 +518,7 @@ impl Parser {
             }
         }
 
-        Parser::JSON(json_parser.parse_json(data))
+        Parser::Json(json_parser.parse_json(data))
     }
 }
 
@@ -183,17 +540,18 @@ impl From<&str> for Operator {
 }
 
 mod test_parser {
-    use std::str::FromStr;
-
-    use super::*;
-    struct TestParser {
-        query: String,
-        result: Value,
-        json: Value,
-    }
 
     #[test]
     fn test_nil_parser() {
+        use super::*;
+        use std::str::FromStr;
+
+        struct TestParser {
+            query: String,
+            result: Value,
+            json: Value,
+        }
+
         let tests = [
             TestParser {
                 query: String::from(".[]"),
@@ -230,6 +588,15 @@ mod test_parser {
 
     #[test]
     fn test_nil_with_length() {
+        use super::*;
+        use std::str::FromStr;
+
+        struct TestParser {
+            query: String,
+            result: Value,
+            json: Value,
+        }
+
         let tests = [
             TestParser {
                 query: String::from(".a | length"),
@@ -261,6 +628,15 @@ mod test_parser {
 
     #[test]
     fn test_piped_operator() {
+        use super::*;
+        use std::str::FromStr;
+
+        struct TestParser {
+            query: String,
+            result: Value,
+            json: Value,
+        }
+
         let tests = [
             TestParser {
                 query: String::from(r#". | {"a": .a} + {"b": .b} + {"c": .c} + {"a": .c}"#),
@@ -395,14 +771,15 @@ mod test_parser {
 }
 
 mod test_json_types {
-    use super::*;
-    struct TestParser {
-        query: String,
-        json_types: Vec<Parser>,
-    }
 
     #[test]
     fn find_length() {
+        use super::*;
+        struct TestParser {
+            query: String,
+            json_types: Vec<Parser>,
+        }
+
         let tests = [
             TestParser {
                 query: String::from("length"),
@@ -417,6 +794,88 @@ mod test_json_types {
         for (i, test) in tests.iter().enumerate() {
             let parsed = Parser::parse_pipe(Value::Null, test.query.clone());
             assert_eq!(vec![parsed], test.json_types, "Failed testing index {}", i);
+        }
+    }
+}
+
+mod test {
+
+    #[test]
+    fn test_convert_to_json() {
+        use super::JsonParser;
+        use serde_json::Value;
+        use std::str::FromStr;
+
+        struct TestParser {
+            query: String,
+            result: Value,
+            json: Value,
+        }
+        let tests = [
+            TestParser {
+                query: String::from(r#"{"a": .a}"#),
+                result: Value::from_str(r#"{"a":".a"}"#).unwrap(),
+                json: serde_json::json!({}),
+            },
+            TestParser {
+                query: String::from(r#"{"a": .a[0]}"#),
+                result: Value::from_str(r#"{"a": ".a[0]"}"#).unwrap(),
+                json: Value::from_str(r#"{}"#).unwrap(),
+            },
+            TestParser {
+                query: String::from(" .a[0]"),
+                result: Value::from_str(r#"".a[0]""#).unwrap(),
+                json: Value::from_str(r#"{}"#).unwrap(),
+            },
+        ];
+
+        for (i, test) in tests.into_iter().enumerate() {
+            let parser = JsonParser::new(test.json.clone());
+            let value = parser.convert_filter_to_string(test.query.clone());
+            assert_eq!(value, test.result, "Failed testing index {}", i);
+        }
+    }
+
+    #[test]
+    fn test_make_valid_json() {
+        use super::JsonParser;
+        use serde_json::Value;
+        use std::str::FromStr;
+
+        struct TestParser {
+            query: String,
+            result: Value,
+            json: Value,
+        }
+        let tests = [
+            TestParser {
+                query: String::from(r#"{"a": .a}"#),
+                result: Value::from_str(r#"{"a":"Hello"}"#).unwrap(),
+                json: serde_json::json!({
+                    "a": "Hello",
+                    "b": 1,
+                    "c": true,
+                }),
+            },
+            TestParser {
+                query: String::from(r#"{"a": .a[0]}"#),
+                result: Value::from_str(r#"{"a":{"a":55,"c":100}}"#).unwrap(),
+                json: Value::from_str(
+                    r#"{"a": [{"a": 55, "c": 100}, {"b": 2}], "b": 1,"c": true}"#,
+                )
+                .unwrap(),
+            },
+            TestParser {
+                query: String::from(" .a[0]"),
+                result: Value::from_str(r#"{"a":55,"c":100}"#).unwrap(),
+                json: Value::from_str(r#"{"a": [{"a": 55, "c": 100}, {"b": 2}]}"#).unwrap(),
+            },
+        ];
+
+        for (i, test) in tests.into_iter().enumerate() {
+            let parser = JsonParser::new(test.json.clone());
+            let value = parser.parse_json(test.query.clone());
+            assert_eq!(value, test.result, "Failed testing index {}", i);
         }
     }
 }

@@ -1,30 +1,36 @@
-use crate::json_parser::Json;
-
 use super::processor::Processor;
 
 #[derive(Debug, Clone)]
-struct Toml {
+pub struct Toml {
     data: toml::Value,
 }
 
 impl Toml {
-    fn new(data: &str) -> Self {
+    pub fn new(data: &str) -> Self {
         let data = toml::from_str(data).unwrap();
         Toml { data }
+    }
+
+    #[allow(dead_code)]
+    pub fn get_toml(&self) -> toml::Value {
+        self.data.clone()
     }
 }
 
 impl Processor for Toml {
-    type T = toml::Value;
+    type T = Toml;
 
     fn from_json(json_data: serde_json::Value) -> Self::T {
         let data = toml::to_string(&json_data).unwrap();
-        toml::from_str(&data).unwrap()
+        Toml::new(&data)
     }
 
-    fn to_json(&self) -> Json {
-        let json = serde_json::to_value(self.data.clone()).unwrap();
-        Json::new(json)
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::to_value(self.data.clone()).unwrap()
+    }
+
+    fn to_string(&self) -> String {
+        self.data.to_string()
     }
 }
 
@@ -41,7 +47,7 @@ fn convert_json_to_toml() {
         }"#;
     let json_marshalled_val = serde_json::from_str(json_data).unwrap();
 
-    let toml = Toml::from_json(json_marshalled_val);
+    let toml = Toml::from_json(json_marshalled_val).get_toml();
 
     let toml_val: toml::Value = toml::from_str(
         r#"
@@ -76,5 +82,5 @@ phones = ["+44 1234567", "+44 2345678"]
     }"#,
     )
     .unwrap();
-    assert_eq!(json_data.json, json_val)
+    assert_eq!(json_data, json_val)
 }
