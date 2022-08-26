@@ -6,8 +6,8 @@ pub struct Toml {
 }
 
 impl Toml {
-    pub fn new(data: &str) -> Self {
-        let data = toml::from_str(data).unwrap();
+    pub fn new(data: String) -> Self {
+        let data = toml::from_str(&data).unwrap();
         Toml { data }
     }
 
@@ -22,7 +22,7 @@ impl Processor for Toml {
 
     fn from_json(json_data: serde_json::Value) -> Self::T {
         let data = toml::to_string(&json_data).unwrap();
-        Toml::new(&data)
+        Toml::new(data)
     }
 
     fn to_json(&self) -> serde_json::Value {
@@ -30,7 +30,7 @@ impl Processor for Toml {
     }
 
     fn to_string(&self) -> String {
-        self.data.to_string()
+        toml::to_string_pretty(&self.data).unwrap()
     }
 }
 
@@ -67,7 +67,7 @@ name = "John Doe"
 phones = ["+44 1234567", "+44 2345678"]
 "#;
 
-    let toml = Toml::new(&toml_str);
+    let toml = Toml::new(toml_str.to_string());
     let json_data = toml.to_json();
 
     let json_val: serde_json::Value = serde_json::from_str(

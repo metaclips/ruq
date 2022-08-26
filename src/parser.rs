@@ -44,14 +44,10 @@ impl JsonParser {
     }
 
     fn convert_filter_to_string(&self, mut query: String) -> Value {
-        let value = query.clone();
-        for capture in self.filter_converter.captures_iter(&value) {
-            let filter = capture.name("filter").unwrap().as_str();
-            query = self
-                .filter_converter
-                .replace(&query, format!("\"{filter}\""))
-                .to_string();
-        }
+        query = self
+            .filter_converter
+            .replace_all(&query, r#""$filter""#)
+            .to_string();
 
         Value::from_str(&query).unwrap()
     }
@@ -574,8 +570,8 @@ mod test_parser {
                 json: Value::from_str(r#"{"a": 1}"#).unwrap(),
             },
             TestParser {
-                query: String::from(" . "),
-                result: Value::from_str(r#"{"a": 1}"#).unwrap(),
+                query: String::from(r#" . | {"michael_age": .a, "michael_height": .a}"#),
+                result: Value::from_str(r#"{"michael_age": 1, "michael_height": 1}"#).unwrap(),
                 json: Value::from_str(r#"{"a": 1}"#).unwrap(),
             },
         ];
