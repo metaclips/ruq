@@ -24,16 +24,19 @@ struct JsonParser {
     json: Value,
     filter_regex: Regex,
     filter_converter: Regex,
+    filter_reversal: Regex,
 }
 
 impl JsonParser {
     fn new(json: Value) -> Self {
         let filter_regex = Regex::new(r"(\.(?P<key>\w*)\s*(\[(?P<index>\d+?)\])?)").unwrap();
         let filter_converter = Regex::new(r#"(?P<filter>(\.\w*(\[\d*\])?)+)"#).unwrap();
+        let filter_reversal = Regex::new(r#"(?P<filter>(""\.\w*(\[\d*\])?"")+)"#).unwrap();
         Self {
             json,
             filter_regex,
             filter_converter,
+            filter_reversal,
         }
     }
 
@@ -48,6 +51,14 @@ impl JsonParser {
             .filter_converter
             .replace_all(&query, r#""$filter""#)
             .to_string();
+
+        for capture in self.filter_reversal.find_iter(&query.clone()) {
+            let mut capture = capture.as_str().to_string();
+            if capture.starts_with(r#""""#) && capture.ends_with(r#""""#) {
+                capture = format!(r#""_{}_""#, capture[2..capture.len() - 2].to_string());
+                query = self.filter_reversal.replace(&query, capture).to_string();
+            }
+        }
 
         Value::from_str(&query).unwrap()
     }
@@ -65,27 +76,27 @@ impl JsonParser {
                 }
             }
             Value::String(e) => {
-                if e.starts_with('"') {
-                    return;
-                }
+                if self.filter_regex.is_match(e) {
+                    if e.starts_with('_') && e.ends_with('_') {
+                        *e = e[1..e.len() - 1].to_string();
+                    } else {
+                        let mut value = self.json.clone();
+                        for filter_capture in self.filter_regex.captures_iter(e) {
+                            let key = filter_capture.name("key").unwrap().as_str();
+                            if !key.is_empty() {
+                                value = value.get(key).cloned().unwrap_or_default();
+                            }
 
-                if e.starts_with('.') {
-                    let mut value = self.json.clone();
-                    for filter_capture in self.filter_regex.captures_iter(e) {
-                        let key = filter_capture.name("key").unwrap().as_str();
-                        if !key.is_empty() {
-                            value = value.get(key).cloned().unwrap_or_default();
+                            if let Some(e) = filter_capture.name("index") {
+                                value = value
+                                    .get(e.as_str().parse::<usize>().unwrap())
+                                    .cloned()
+                                    .unwrap_or_default()
+                            }
                         }
 
-                        if let Some(e) = filter_capture.name("index") {
-                            value = value
-                                .get(e.as_str().parse::<usize>().unwrap())
-                                .cloned()
-                                .unwrap_or_default()
-                        }
+                        *json = value
                     }
-
-                    *json = value
                 }
             }
             _ => {}
@@ -865,6 +876,15 @@ mod test {
                 query: String::from(" .a[0]"),
                 result: Value::from_str(r#"{"a":55,"c":100}"#).unwrap(),
                 json: Value::from_str(r#"{"a": [{"a": 55, "c": 100}, {"b": 2}]}"#).unwrap(),
+            },
+            TestParser {
+                query: String::from(r#"{"a": ".a", "b": .a}"#),
+                result: Value::from_str(r#"{"a":".a", "b": "Hello"}"#).unwrap(),
+                json: serde_json::json!({
+                    "a": "Hello",
+                    "b": 1,
+                    "c": true,
+                }),
             },
         ];
 
