@@ -120,7 +120,7 @@ impl JsonParser {
                 Operator::Nil => unreachable!(),
             };
 
-            recent_operator = operator.clone();
+            recent_operator = operator;
             recent_value = value;
         }
 
@@ -401,7 +401,7 @@ impl Parser {
 
         while post != None {
             (pre, post) = Self::regexer(&parser, post.unwrap());
-            value = Self::query(value.clone(), pre.to_string());
+            value = Self::query(value, pre.to_string());
         }
 
         value

@@ -13,7 +13,7 @@ pub struct Args {
     pub filter: String,
 
     /// Object language passed, json, toml, etc.
-    #[clap(long, value_parser)]
+    #[clap(long, value_parser, default_value = "json")]
     pub from: String,
 
     /// Object language to convert to, JSON, TOML, etc.
