@@ -1,4 +1,4 @@
-RUQ (Rust Universal Querier), is a lightweight JSON, TOML, and YAML processor. ruq uses jq like syntax but works with json, and yaml.
+RUQ (Rust Universal Querier), is a lightweight JSON, TOML, and YAML processor. RUQ uses [jq](https://github.com/stedolan/jq) like syntax.
 
 # User Guide
 
