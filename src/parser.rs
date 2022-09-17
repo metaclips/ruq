@@ -1,6 +1,5 @@
 use regex::Regex;
 use serde_json::{Map, Number, Value};
-use std::fmt::Debug;
 use std::str::FromStr;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -23,84 +22,97 @@ pub enum Operator {
 struct JsonParser {
     json: Value,
     filter_regex: Regex,
-    filter_converter: Regex,
-    filter_reversal: Regex,
 }
 
 impl JsonParser {
     fn new(json: Value) -> Self {
         let filter_regex = Regex::new(r"(\.(?P<key>\w*)\s*(\[(?P<index>\d+?)\])?)").unwrap();
-        let filter_converter = Regex::new(r#"(?P<filter>(\.\w*(\[\d*\])?)+)"#).unwrap();
-        let filter_reversal = Regex::new(r#"(?P<filter>(""\.\w*(\[\d*\])?"")+)"#).unwrap();
-        Self {
-            json,
-            filter_regex,
-            filter_converter,
-            filter_reversal,
-        }
+        Self { json, filter_regex }
     }
 
     fn parse_json(&self, query: String) -> Value {
-        let mut value = self.convert_filter_to_string(query);
-        self.create_valid_json(&mut value);
-        value
+        let parsed_query = self.parse_filters(query);
+        Value::from_str(&parsed_query).unwrap()
     }
 
-    fn convert_filter_to_string(&self, mut query: String) -> Value {
-        query = self
-            .filter_converter
-            .replace_all(&query, r#""$filter""#)
-            .to_string();
+    fn parse_filters(&self, mut query: String) -> String {
+        let chars = query.clone();
+        let chars = chars.chars();
 
-        for capture in self.filter_reversal.find_iter(&query.clone()) {
-            let mut capture = capture.as_str().to_string();
-            if capture.starts_with(r#""""#) && capture.ends_with(r#""""#) {
-                capture = format!(r#""_{}_""#, capture[2..capture.len() - 2].to_string());
-                query = self.filter_reversal.replace(&query, capture).to_string();
-            }
-        }
+        let mut discard = false;
+        let mut found_filter = false;
+        let mut filter_index = 0;
+        let mut filter_range = vec![];
 
-        Value::from_str(&query).unwrap()
-    }
-
-    fn create_valid_json(&self, json: &mut Value) {
-        match json {
-            Value::Array(e) => {
-                for value in e {
-                    self.create_valid_json(value)
+        for (index, char) in chars.into_iter().enumerate() {
+            match char {
+                '"' | '\'' | '\\' => {
+                    discard = !discard;
                 }
-            }
-            Value::Object(e) => {
-                for (_, value) in e {
-                    self.create_valid_json(value)
+                '.' => {
+                    if discard || found_filter {
+                        continue;
+                    }
+
+                    found_filter = true;
+                    filter_index = index;
                 }
-            }
-            Value::String(e) => {
-                if self.filter_regex.is_match(e) {
-                    if e.starts_with('_') && e.ends_with('_') {
-                        *e = e[1..e.len() - 1].to_string();
-                    } else {
-                        let mut value = self.json.clone();
-                        for filter_capture in self.filter_regex.captures_iter(e) {
-                            let key = filter_capture.name("key").unwrap().as_str();
-                            if !key.is_empty() {
-                                value = value.get(key).cloned().unwrap_or_default();
+                '}' | ']' | ',' | ' ' => {
+                    if found_filter {
+                        let left_char = query.chars().nth(index - 1).unwrap();
+
+                        if left_char == '[' || left_char.is_numeric() {
+                            if query.chars().nth(index + 1).is_some() {
+                                continue;
                             }
 
-                            if let Some(e) = filter_capture.name("index") {
-                                value = value
-                                    .get(e.as_str().parse::<usize>().unwrap())
-                                    .cloned()
-                                    .unwrap_or_default()
-                            }
+                            filter_range.push(filter_index..=index);
+                        } else {
+                            filter_range.push(filter_index..=index - 1);
                         }
 
-                        *json = value
+                        discard = false;
+                        found_filter = false;
                     }
                 }
+                _ => {}
             }
-            _ => {}
+
+            if query.chars().nth(index + 1).is_none() && found_filter {
+                filter_range.push(filter_index..=index);
+            }
         }
+
+        // Loop backwards
+        while let Some(range) = filter_range.pop() {
+            let start = *range.start();
+
+            let mut filter: String = query.drain(range).collect();
+            if self.filter_regex.is_match(&filter) {
+                let mut value = self.json.clone();
+                for filter_capture in self.filter_regex.captures_iter(&filter) {
+                    let key = filter_capture.name("key").unwrap().as_str();
+                    if !key.is_empty() {
+                        value = value.get(key).cloned().unwrap_or_default();
+                    }
+
+                    if let Some(e) = filter_capture.name("index") {
+                        value = value
+                            .get(e.as_str().parse::<usize>().unwrap())
+                            .cloned()
+                            .unwrap_or_default()
+                    }
+                }
+
+                filter = value.to_string()
+            } else {
+                panic!("Invalid filter {}", filter)
+            }
+
+            query.insert_str(start, filter.as_str());
+        }
+
+        query
     }
 
     pub fn json_data_operator(mut json: Vec<(Operator, Value)>) -> Value {
@@ -187,7 +199,6 @@ impl JsonParser {
                         );
                         e.remove(&key);
                     } else {
-                        println!("{key} {}", pre_value);
                         result.insert(key, pre_value);
                     }
                 }
@@ -806,45 +817,8 @@ mod test_json_types {
 }
 
 mod test {
-
     #[test]
-    fn test_convert_to_json() {
-        use super::JsonParser;
-        use serde_json::Value;
-        use std::str::FromStr;
-
-        struct TestParser {
-            query: String,
-            result: Value,
-            json: Value,
-        }
-        let tests = [
-            TestParser {
-                query: String::from(r#"{"a": .a}"#),
-                result: Value::from_str(r#"{"a":".a"}"#).unwrap(),
-                json: serde_json::json!({}),
-            },
-            TestParser {
-                query: String::from(r#"{"a": .a[0]}"#),
-                result: Value::from_str(r#"{"a": ".a[0]"}"#).unwrap(),
-                json: Value::from_str(r#"{}"#).unwrap(),
-            },
-            TestParser {
-                query: String::from(" .a[0]"),
-                result: Value::from_str(r#"".a[0]""#).unwrap(),
-                json: Value::from_str(r#"{}"#).unwrap(),
-            },
-        ];
-
-        for (i, test) in tests.into_iter().enumerate() {
-            let parser = JsonParser::new(test.json.clone());
-            let value = parser.convert_filter_to_string(test.query.clone());
-            assert_eq!(value, test.result, "Failed testing index {}", i);
-        }
-    }
-
-    #[test]
-    fn test_make_valid_json() {
+    fn make_valid_json() {
         use super::JsonParser;
         use serde_json::Value;
         use std::str::FromStr;
@@ -876,6 +850,11 @@ mod test {
                 query: String::from(" .a[0]"),
                 result: Value::from_str(r#"{"a":55,"c":100}"#).unwrap(),
                 json: Value::from_str(r#"{"a": [{"a": 55, "c": 100}, {"b": 2}]}"#).unwrap(),
+            },
+            TestParser {
+                query: String::from(r#"{"a": "a.b"}"#),
+                result: Value::from_str(r#"{"a": "a.b"}"#).unwrap(),
+                json: Value::from_str(r#"{}"#).unwrap(),
             },
             TestParser {
                 query: String::from(r#"{"a": ".a", "b": .a}"#),
