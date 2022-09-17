@@ -24,6 +24,7 @@ pub struct Args {
 pub enum SupportedLanguages {
     Json,
     Toml,
+    Yaml,
     Unsupported,
 }
 
@@ -32,6 +33,7 @@ impl From<String> for SupportedLanguages {
         match val.to_lowercase().as_str() {
             "json" => Self::Json,
             "toml" => Self::Toml,
+            "yaml" => Self::Yaml,
             _ => Self::Unsupported,
         }
     }

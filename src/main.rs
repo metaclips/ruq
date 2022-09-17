@@ -2,6 +2,7 @@ mod args;
 mod parser;
 mod processor;
 mod toml;
+mod yaml;
 
 use args::{Args, SupportedLanguages};
 use clap::Parser;
@@ -26,6 +27,7 @@ fn main() {
     let json = match SupportedLanguages::from(args.from.clone()) {
         SupportedLanguages::Json => Value::from_str(input.as_str()).unwrap(),
         SupportedLanguages::Toml => toml::Toml::new(input).to_json(),
+        SupportedLanguages::Yaml => yaml::Yaml::new(input).to_json(),
         SupportedLanguages::Unsupported => panic!("Unsupported language"),
     };
 
@@ -42,6 +44,7 @@ fn main() {
     let result = match SupportedLanguages::from(conversion_to) {
         SupportedLanguages::Json => serde_json::to_string_pretty(&result).unwrap(),
         SupportedLanguages::Toml => toml::Toml::from_json(result).to_string(),
+        SupportedLanguages::Yaml => yaml::Yaml::from_json(result).to_string(),
         SupportedLanguages::Unsupported => panic!("Unsupported language"),
     };
 
