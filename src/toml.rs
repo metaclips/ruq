@@ -21,8 +21,10 @@ impl Processor for Toml {
     type T = Toml;
 
     fn from_json(json_data: serde_json::Value) -> Self::T {
-        let data = toml::to_string(&json_data).unwrap();
-        Toml::new(data)
+        let data: toml::Value = serde_json::from_value(json_data).unwrap();
+        Toml {
+            data
+        }
     }
 
     fn to_json(&self) -> serde_json::Value {
@@ -83,4 +85,58 @@ phones = ["+44 1234567", "+44 2345678"]
     )
     .unwrap();
     assert_eq!(json_data, json_val)
+}
+
+#[test]
+fn convert_cargo_json_to_toml() {
+    let json_data = r#"{
+        "dependencies": {
+          "clap": {
+            "features": [
+              "derive"
+            ],
+            "version": "3.2.17"
+          },
+          "regex": "1.5.6",
+          "serde": {
+            "features": [
+              "derive"
+            ],
+            "version": "1.0"
+          },
+          "serde_json": {
+            "version": "1.0"
+          },
+          "serde_yaml": "0.9.13",
+          "toml": "0.5.9"
+        },
+        "package": {
+          "edition": "2021",
+          "name": "ruq",
+          "version": "0.1.0"
+        }
+      }"#;
+
+    let json_marshalled_val = serde_json::from_str(json_data).unwrap();
+
+    let toml = Toml::from_json(json_marshalled_val).get_toml();
+
+    let toml_val: toml::Value = toml::from_str(
+        r#"
+        [package]
+        name = "ruq"
+        version = "0.1.0"
+        edition = "2021"
+        
+        [dependencies]
+        serde_json = { version = "1.0" }
+        regex = "1.5.6"
+        toml = "0.5.9"
+        serde = { version = "1.0", features = ["derive"] }
+        clap = { version = "3.2.17", features = ["derive"] }
+        serde_yaml = "0.9.13"      
+"#,
+    )
+    .unwrap();
+    assert_eq!(toml_val, toml);
 }
