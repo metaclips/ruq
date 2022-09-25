@@ -22,9 +22,7 @@ impl Processor for Toml {
 
     fn from_json(json_data: serde_json::Value) -> Self::T {
         let data: toml::Value = serde_json::from_value(json_data).unwrap();
-        Toml {
-            data
-        }
+        Toml { data }
     }
 
     fn to_json(&self) -> serde_json::Value {
