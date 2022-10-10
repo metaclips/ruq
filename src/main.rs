@@ -1,6 +1,7 @@
 mod args;
 mod parser;
 mod processor;
+mod ser;
 mod toml;
 mod yaml;
 
