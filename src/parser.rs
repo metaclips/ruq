@@ -1,3 +1,4 @@
+use crate::ser;
 use regex::Regex;
 use serde_json::{Map, Number, Value};
 use std::str::FromStr;
@@ -19,9 +20,9 @@ pub enum Operator {
     Nil,
 }
 
-struct JsonParser {
-    json: Value,
-    filter_regex: Regex,
+pub struct JsonParser {
+    pub json: Value,
+    pub filter_regex: Regex,
 }
 
 impl JsonParser {
@@ -31,88 +32,8 @@ impl JsonParser {
     }
 
     fn parse_json(&self, query: String) -> Value {
-        let parsed_query = self.parse_filters(query);
-        Value::from_str(&parsed_query).unwrap()
-    }
-
-    fn parse_filters(&self, mut query: String) -> String {
-        let chars = query.clone();
-        let chars = chars.chars();
-
-        let mut discard = false;
-        let mut found_filter = false;
-        let mut filter_index = 0;
-        let mut filter_range = vec![];
-
-        for (index, char) in chars.into_iter().enumerate() {
-            match char {
-                '"' | '\'' | '\\' => {
-                    discard = !discard;
-                }
-                '.' => {
-                    if discard || found_filter {
-                        continue;
-                    }
-
-                    found_filter = true;
-                    filter_index = index;
-                }
-                '}' | ']' | ',' | ' ' => {
-                    if found_filter {
-                        let left_char = query.chars().nth(index - 1).unwrap();
-
-                        if left_char == '[' || left_char.is_numeric() {
-                            if query.chars().nth(index + 1).is_some() {
-                                continue;
-                            }
-
-                            filter_range.push(filter_index..=index);
-                        } else {
-                            filter_range.push(filter_index..=index - 1);
-                        }
-
-                        discard = false;
-                        found_filter = false;
-                    }
-                }
-                _ => {}
-            }
-
-            if query.chars().nth(index + 1).is_none() && found_filter {
-                filter_range.push(filter_index..=index);
-            }
-        }
-
-        // Loop backwards
-        while let Some(range) = filter_range.pop() {
-            let start = *range.start();
-
-            let mut filter: String = query.drain(range).collect();
-            if self.filter_regex.is_match(&filter) {
-                let mut value = self.json.clone();
-                for filter_capture in self.filter_regex.captures_iter(&filter) {
-                    let key = filter_capture.name("key").unwrap().as_str();
-                    if !key.is_empty() {
-                        value = value.get(key).cloned().unwrap_or_default();
-                    }
-
-                    if let Some(e) = filter_capture.name("index") {
-                        value = value
-                            .get(e.as_str().parse::<usize>().unwrap())
-                            .cloned()
-                            .unwrap_or_default()
-                    }
-                }
-
-                filter = value.to_string()
-            } else {
-                panic!("Invalid filter {}", filter)
-            }
-
-            query.insert_str(start, filter.as_str());
-        }
-
-        query
+        let result = ser::parse_filter(&query, &self).unwrap();
+        Value::from_str(&result).unwrap()
     }
 
     pub fn json_data_operator(mut json: Vec<(Operator, Value)>) -> Value {
